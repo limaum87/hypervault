@@ -24,6 +24,7 @@ builder.Services.AddSingleton<ApiPathValidator>();
 builder.Services.AddSingleton<ApiJobService>();
 builder.Services.AddSingleton<ApiAgentInfoService>();
 builder.Services.AddSingleton<ApiPreflightService>();
+builder.Services.AddSingleton<ApiHealthService>();
 
 var app = builder.Build();
 
@@ -76,7 +77,7 @@ app.Use(async (context, next) =>
 });
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path == "/health")
+    if (context.Request.Path.StartsWithSegments("/health"))
     {
         await next();
         return;
@@ -100,6 +101,14 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/live", (ApiHealthService health) => Results.Ok(health.GetLive()));
+app.MapGet("/health/ready", async (ApiHealthService health, CancellationToken ct) =>
+{
+    var result = await health.GetReadyAsync(ct);
+    return result.Status == "ready"
+        ? Results.Ok(result)
+        : Results.Json(result, statusCode: StatusCodes.Status503ServiceUnavailable);
+});
 app.MapGet("/agent", (ApiAgentInfoService agent) => Results.Ok(agent.GetAgentInfo()));
 app.MapGet("/configuration/effective", (ApiAgentInfoService agent) => Results.Ok(agent.GetEffectiveConfiguration()));
 app.MapGet("/agent/certificate", (IConfiguration configuration, IWebHostEnvironment environment) =>

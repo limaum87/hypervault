@@ -204,6 +204,8 @@ If a customer already has a certificate, set `Certificate:Path` and `Certificate
 Implemented endpoints:
 
 - `GET /health`
+- `GET /health/live`
+- `GET /health/ready`
 - `GET /agent`
 - `GET /agent/certificate`
 - `GET /configuration/effective`
@@ -234,6 +236,8 @@ The `/jobs/*` endpoints are the preferred integration path for a central server 
 Use pre-flight endpoints before creating long-running jobs. Backup pre-flight validates VM existence, Production Checkpoint support, destination accessibility, free space, and RCT availability for incrementals. Restore pre-flight validates the chain metadata, destination, free space, and VM name conflicts.
 
 API logs are structured JSON on stdout and, by default, daily rolling files. On Windows, file logs are written to `C:\ProgramData\HyperVBackupAgent\logs\hypervbackupagent-api-*.log`; override the directory with `HyperVBackupAgent:Api:Logging:Directory`, retention with `RetainedFileCountLimit`, and per-file size with `FileSizeLimitBytes`. Each HTTP response includes `X-Correlation-Id`; clients may also supply that header. Request logs and job logs include `CorrelationId`, and asynchronous job execution logs include `JobId`.
+
+Health checks are public. `GET /health/live` reports whether the API process is running. `GET /health/ready` returns `200` only when the API token is configured, the backup root exists and is accessible, and the configured Hyper-V provider can be initialized; otherwise it returns `503` with per-check details.
 
 ## Windows Service Scheduler
 

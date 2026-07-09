@@ -19,6 +19,8 @@ Servidor central / painel web
 Ja implementado:
 
 - `GET /health`
+- `GET /health/live`
+- `GET /health/ready`
 - `GET /vms`
 - `GET /vms/{id}`
 - `GET /vms/{id}/restore-points`
@@ -246,6 +248,8 @@ Observacao:
 
 ### 11. Health checks mais completos
 
+Status: implementado inicialmente.
+
 Adicionar:
 
 - `GET /health/live`
@@ -260,6 +264,12 @@ Ready deve validar:
 Criterio de aceite:
 
 - Monitoramento externo diferencia processo vivo de agente pronto para operar.
+
+Observacao:
+
+- `GET /health/live` valida apenas que o processo da API esta respondendo.
+- `GET /health/ready` retorna `503` quando falta token, o backup root nao existe/nao e acessivel, ou o provider Hyper-V nao inicializa/lista VMs.
+- Os endpoints de health sao publicos para uso por monitoramento externo.
 
 ### 12. Documentar contrato HTTP
 
