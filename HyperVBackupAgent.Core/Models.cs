@@ -74,7 +74,11 @@ public sealed record RestorePointSummary(
     DateTimeOffset CreatedAt,
     BackupStatus Status,
     string ChainPath,
-    string? ParentBackupId = null);
+    string? ParentBackupId = null,
+    string? VmId = null,
+    string? VmName = null,
+    long SizeBytes = 0,
+    string? RestorePointPath = null);
 
 public sealed record RetentionRequest(
     string BackupRoot,

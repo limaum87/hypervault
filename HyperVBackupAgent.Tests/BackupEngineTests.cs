@@ -209,7 +209,10 @@ public sealed class BackupEngineTests
 
         var restorePoint = Assert.Single(restorePoints);
         Assert.Equal(BackupType.Full, restorePoint.Type);
+        Assert.Equal("ERP01", restorePoint.VmName);
+        Assert.True(restorePoint.SizeBytes > 0);
         Assert.True(Directory.Exists(restorePoint.ChainPath));
+        Assert.True(Directory.Exists(restorePoint.RestorePointPath));
     }
 
     [Fact]

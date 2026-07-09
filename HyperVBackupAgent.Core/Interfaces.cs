@@ -53,7 +53,12 @@ public interface IMetadataRepository
 
 public interface IRestorePointCatalog
 {
-    Task<IReadOnlyList<RestorePointSummary>> ListRestorePointsAsync(string vmIdOrName, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RestorePointSummary>> ListRestorePointsAsync(
+        string vmIdOrName,
+        BackupStatus? status = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IRetentionService

@@ -15,6 +15,7 @@ builder.Services.AddHyperVBackupAgent(builder.Configuration);
 builder.Services.AddSingleton<ApiPathValidator>();
 builder.Services.AddSingleton<ApiJobService>();
 builder.Services.AddSingleton<ApiAgentInfoService>();
+builder.Services.AddSingleton<ApiPreflightService>();
 
 var app = builder.Build();
 
@@ -162,14 +163,39 @@ app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, Api
     });
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
+app.MapPost("/backups/preflight", async (BackupPreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
+{
+    var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
+    return Results.Ok(await preflight.CheckBackupAsync(validated, ct));
+});
+app.MapPost("/restore/preflight", async (RestorePreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
+{
+    var validated = request with
+    {
+        RestorePoint = paths.ValidateAbsolutePath(request.RestorePoint, nameof(request.RestorePoint)),
+        Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination))
+    };
+    return Results.Ok(await preflight.CheckRestoreAsync(validated, ct));
+});
 app.MapGet("/vms", async (IHyperVService hyperV, CancellationToken ct) => Results.Ok(await hyperV.ListVmsAsync(ct)));
 app.MapGet("/vms/{id}", async (string id, IHyperVService hyperV, CancellationToken ct) =>
 {
     var vm = await hyperV.GetVmAsync(id, ct);
     return vm is null ? Results.NotFound() : Results.Ok(vm);
 });
-app.MapGet("/vms/{id}/restore-points", async (string id, IRestorePointCatalog catalog, CancellationToken ct) =>
-    Results.Ok(await catalog.ListRestorePointsAsync(id, ct)));
+app.MapGet("/vms/{id}/restore-points", async (
+    string id,
+    string? status,
+    DateTimeOffset? from,
+    DateTimeOffset? to,
+    IRestorePointCatalog catalog,
+    CancellationToken ct) =>
+{
+    BackupStatus? parsedStatus = string.IsNullOrWhiteSpace(status)
+        ? null
+        : Enum.Parse<BackupStatus>(status, ignoreCase: true);
+    return Results.Ok(await catalog.ListRestorePointsAsync(id, parsedStatus, from, to, ct));
+});
 app.MapPost("/backups/full", async (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };

@@ -212,6 +212,9 @@ Implemented endpoints:
 - `GET /vms`
 - `GET /vms/{id}`
 - `GET /vms/{id}/restore-points`
+- `GET /vms/{id}/restore-points?status=Completed&from=2026-07-01T00:00:00Z&to=2026-07-31T23:59:59Z`
+- `POST /backups/preflight`
+- `POST /restore/preflight`
 - `POST /backups/full`
 - `POST /backups/incremental`
 - `POST /backups/verify-chain`
@@ -221,6 +224,8 @@ Implemented endpoints:
 - `POST /maintenance/apply-retention`
 
 The `/jobs/*` endpoints are the preferred integration path for a central server because backup, restore, and verification can take a long time. Job history is stored locally as JSON. On Windows, the default path is `C:\ProgramData\HyperVBackupAgent\jobs\api-jobs.json`; override it with `HyperVBackupAgent:Api:Jobs:StorePath`.
+
+Use pre-flight endpoints before creating long-running jobs. Backup pre-flight validates VM existence, Production Checkpoint support, destination accessibility, free space, and RCT availability for incrementals. Restore pre-flight validates the chain metadata, destination, free space, and VM name conflicts.
 
 ## Windows Service Scheduler
 

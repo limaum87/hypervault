@@ -190,6 +190,8 @@ Criterio de aceite:
 
 ### 8. Melhorar listagem de restore points
 
+Status: implementado inicialmente.
+
 - Confirmar contrato `GET /vms/{id}/restore-points`.
 - Incluir chain id, backup id, tipo, data, status, tamanho e caminho.
 - Permitir filtro por status e intervalo de datas.
@@ -199,6 +201,8 @@ Criterio de aceite:
 - Painel consegue montar tela de restore sem varrer detalhes manualmente.
 
 ### 9. Endpoint para validar pre-flight
+
+Status: implementado inicialmente.
 
 Adicionar:
 

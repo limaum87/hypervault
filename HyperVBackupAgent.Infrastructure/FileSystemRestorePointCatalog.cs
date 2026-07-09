@@ -13,7 +13,12 @@ public sealed class FileSystemRestorePointCatalog : IRestorePointCatalog
         _metadata = metadata;
     }
 
-    public async Task<IReadOnlyList<RestorePointSummary>> ListRestorePointsAsync(string vmIdOrName, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<RestorePointSummary>> ListRestorePointsAsync(
+        string vmIdOrName,
+        BackupStatus? status = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(_backupRoot))
         {
@@ -40,14 +45,22 @@ public sealed class FileSystemRestorePointCatalog : IRestorePointCatalog
                 continue;
             }
 
-            summaries.AddRange(chain.RestorePoints.Select(point => new RestorePointSummary(
-                chain.ChainId,
-                point.BackupId,
-                point.Type,
-                point.CreatedAt,
-                point.Status,
-                chainDirectory,
-                point.ParentBackupId)));
+            summaries.AddRange(chain.RestorePoints
+                .Where(point => status is null || point.Status == status)
+                .Where(point => from is null || point.CreatedAt >= from)
+                .Where(point => to is null || point.CreatedAt <= to)
+                .Select(point => new RestorePointSummary(
+                    chain.ChainId,
+                    point.BackupId,
+                    point.Type,
+                    point.CreatedAt,
+                    point.Status,
+                    chainDirectory,
+                    point.ParentBackupId,
+                    chain.VmId,
+                    chain.VmName,
+                    point.SizeBytes,
+                    ResolveRestorePointPath(chainDirectory, point))));
         }
 
         return summaries
@@ -58,4 +71,9 @@ public sealed class FileSystemRestorePointCatalog : IRestorePointCatalog
     private static bool MatchesVm(BackupChainMetadata chain, string vmIdOrName)
         => string.Equals(chain.VmId, vmIdOrName, StringComparison.OrdinalIgnoreCase) ||
            string.Equals(chain.VmName, vmIdOrName, StringComparison.OrdinalIgnoreCase);
+
+    private static string ResolveRestorePointPath(string chainDirectory, BackupMetadata point)
+        => point.Type == BackupType.Full
+            ? Path.Combine(chainDirectory, "full")
+            : Path.Combine(chainDirectory, "increments", point.BackupId);
 }
