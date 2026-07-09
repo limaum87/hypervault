@@ -35,6 +35,7 @@ public sealed class BackupEngine : IBackupEngine
         try
         {
             checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-{backupId}", cancellationToken);
+            var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
             var backup = new BackupMetadata
             {
                 BackupId = backupId,
@@ -45,7 +46,7 @@ public sealed class BackupEngine : IBackupEngine
                 Status = BackupStatus.Completed
             };
 
-            foreach (var disk in vm.Disks)
+            foreach (var disk in consistentDisks)
             {
                 var fileName = $"{disk.Id}.full{Path.GetExtension(disk.Path)}";
                 var destination = Path.Combine(fullDirectory, fileName);
@@ -71,7 +72,7 @@ public sealed class BackupEngine : IBackupEngine
                 LatestRestorePoint = backupId,
                 FullBackupId = backupId,
                 Status = BackupStatus.Completed,
-                Disks = vm.Disks.ToList(),
+                Disks = consistentDisks.ToList(),
                 RestorePoints = { backup }
             };
 
@@ -109,6 +110,7 @@ public sealed class BackupEngine : IBackupEngine
         try
         {
             checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-{backupId}", cancellationToken);
+            var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
             var backup = new BackupMetadata
             {
                 BackupId = backupId,
@@ -120,7 +122,7 @@ public sealed class BackupEngine : IBackupEngine
                 Status = BackupStatus.Completed
             };
 
-            foreach (var disk in vm.Disks)
+            foreach (var disk in consistentDisks)
             {
                 var previousChangeId = parent.RctReferenceIds.GetValueOrDefault(disk.Id) ?? parent.EndChangeId ?? string.Empty;
                 var rctState = await _rct.GetChangedRangesAsync(vm, disk, previousChangeId, cancellationToken);

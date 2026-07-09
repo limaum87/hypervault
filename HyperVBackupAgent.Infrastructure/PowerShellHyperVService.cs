@@ -99,6 +99,37 @@ public sealed class PowerShellHyperVService : IHyperVService
         return document.RootElement.GetProperty("Id").GetString() ?? name;
     }
 
+    public async Task<IReadOnlyList<VirtualDiskInfo>> GetCheckpointConsistentDisksAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
+    {
+        var script = $$"""
+            $ErrorActionPreference = 'Stop'
+            $vm = Get-VM | Where-Object { $_.Id.ToString() -eq '{{Escape(vmId)}}' -or $_.Name -eq '{{Escape(vmId)}}' } | Select-Object -First 1
+            if (-not $vm) { throw 'VM not found: {{Escape(vmId)}}' }
+            $snapshot = Get-VMSnapshot -VMName $vm.Name | Where-Object { $_.Id.ToString() -eq '{{Escape(checkpointId)}}' -or $_.Name -eq '{{Escape(checkpointId)}}' } | Select-Object -First 1
+            if (-not $snapshot) { throw 'Checkpoint not found: {{Escape(checkpointId)}}' }
+            Get-VMHardDiskDrive -VMName $vm.Name | ForEach-Object {
+              $drive = $_
+              $readPath = $drive.Path
+              $vhd = $null
+              if ($drive.Path -and (Test-Path -LiteralPath $drive.Path)) {
+                $vhd = Get-VHD -Path $drive.Path
+                if ($vhd.ParentPath -and (Test-Path -LiteralPath $vhd.ParentPath)) {
+                  $readPath = $vhd.ParentPath
+                  $vhd = Get-VHD -Path $readPath
+                }
+              }
+              [pscustomobject]@{
+                Id = $drive.ControllerType.ToString() + ':' + $drive.ControllerNumber + ':' + $drive.ControllerLocation
+                Path = $readPath
+                VirtualSizeBytes = if ($vhd) { [int64]$vhd.Size } else { [int64]0 }
+                PhysicalSizeBytes = if ($vhd) { [int64]$vhd.FileSize } elseif ($readPath -and (Test-Path -LiteralPath $readPath)) { [int64](Get-Item -LiteralPath $readPath).Length } else { [int64]0 }
+              }
+            } | ConvertTo-Json -Depth 5
+            """;
+        var json = await RunJsonAsync(script, cancellationToken);
+        return DeserializeDiskList(json);
+    }
+
     public async Task RemoveCheckpointAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
     {
         var script = $$"""
@@ -209,6 +240,23 @@ public sealed class PowerShellHyperVService : IHyperVService
         }
 
         var single = JsonSerializer.Deserialize<VirtualMachineInfo>(json, options);
+        return single is null ? [] : [single];
+    }
+
+    private static IReadOnlyList<VirtualDiskInfo> DeserializeDiskList(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        if (json.TrimStart().StartsWith('['))
+        {
+            return JsonSerializer.Deserialize<List<VirtualDiskInfo>>(json, options) ?? [];
+        }
+
+        var single = JsonSerializer.Deserialize<VirtualDiskInfo>(json, options);
         return single is null ? [] : [single];
     }
 

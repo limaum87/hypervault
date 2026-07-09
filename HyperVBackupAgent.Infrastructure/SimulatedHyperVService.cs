@@ -35,6 +35,13 @@ public sealed class SimulatedHyperVService : IHyperVService
     public Task<string> CreateProductionCheckpointAsync(string vmId, string name, CancellationToken cancellationToken = default)
         => Task.FromResult($"sim-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
 
+    public async Task<IReadOnlyList<VirtualDiskInfo>> GetCheckpointConsistentDisksAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
+    {
+        var vm = await GetVmAsync(vmId, cancellationToken)
+            ?? throw new InvalidOperationException($"VM '{vmId}' was not found.");
+        return vm.Disks;
+    }
+
     public Task RemoveCheckpointAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
