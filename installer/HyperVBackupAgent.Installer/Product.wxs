@@ -1,0 +1,131 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="HyperV Backup Agent"
+    Manufacturer="HyperVault"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="{8B4A4BA9-DC0F-43AE-8B3B-701B074495BE}"
+    Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of HyperV Backup Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="API_TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="BACKUP_ROOT" Value="C:\ProgramData\HyperVBackupAgent\backups" />
+
+    <Launch Condition="VersionNT64" Message="HyperV Backup Agent requires 64-bit Windows." />
+    <Launch Condition="Installed OR API_TOKEN" Message="API_TOKEN is required. Example: msiexec /i HyperVBackupAgent.msi API_TOKEN=your-token" />
+
+    <Feature Id="MainFeature" Title="HyperV Backup Agent" Level="1">
+      <ComponentGroupRef Id="ApiComponents" />
+      <ComponentGroupRef Id="SchedulerComponents" />
+      <ComponentGroupRef Id="ConfigurationComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="HyperV Backup Agent">
+        <Directory Id="ApiFolder" Name="api" />
+        <Directory Id="SchedulerFolder" Name="scheduler" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ProgramDataAppFolder" Name="HyperVBackupAgent">
+        <Directory Id="ProgramDataBackupsFolder" Name="backups" />
+        <Directory Id="ProgramDataLogsFolder" Name="logs" />
+        <Directory Id="ProgramDataJobsFolder" Name="jobs" />
+        <Directory Id="ProgramDataCertsFolder" Name="certs" />
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ApiComponents" Directory="ApiFolder">
+    <Component Id="ApiServiceExecutable" Guid="{1576D976-51F2-4322-AE39-2228B675A1C4}">
+      <File Id="ApiServiceExe" Source="$(var.ApiPublishDir)\HyperVBackupAgent.Api.exe" KeyPath="yes" />
+      <ServiceInstall
+        Id="ApiServiceInstall"
+        Type="ownProcess"
+        Name="HyperVBackupAgent.Api"
+        DisplayName="HyperV Backup Agent API"
+        Description="Local HTTPS API for HyperV Backup Agent orchestration."
+        Start="auto"
+        Account="LocalSystem"
+        ErrorControl="normal" />
+      <ServiceControl
+        Id="ApiServiceControl"
+        Name="HyperVBackupAgent.Api"
+        Start="install"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes" />
+    </Component>
+    <Component Id="ApiAppSettings" Guid="{760A1C16-832D-48B0-874F-97955DCC922F}">
+      <File Id="ApiAppSettingsJson" Source="$(var.ApiPublishDir)\appsettings.json" KeyPath="yes" />
+    </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="SchedulerComponents" Directory="SchedulerFolder">
+    <Component Id="SchedulerServiceExecutable" Guid="{9213FAF8-1F59-42F6-B3C8-2CF8931F4752}">
+      <File Id="SchedulerServiceExe" Source="$(var.SchedulerPublishDir)\HyperVBackupAgent.Service.exe" KeyPath="yes" />
+      <ServiceInstall
+        Id="SchedulerServiceInstall"
+        Type="ownProcess"
+        Name="HyperVBackupAgent.Scheduler"
+        DisplayName="HyperV Backup Agent Scheduler"
+        Description="Automatic full and incremental backup scheduler for HyperV Backup Agent."
+        Start="auto"
+        Account="LocalSystem"
+        ErrorControl="normal" />
+      <ServiceControl
+        Id="SchedulerServiceControl"
+        Name="HyperVBackupAgent.Scheduler"
+        Start="install"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes" />
+    </Component>
+    <Component Id="SchedulerAppSettings" Guid="{B61A7F5E-0069-4CB9-AE28-1F67D0374632}">
+      <File Id="SchedulerAppSettingsJson" Source="$(var.SchedulerPublishDir)\appsettings.json" KeyPath="yes" />
+    </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ConfigurationComponents">
+    <Component Id="ProgramDataFolders" Directory="ProgramDataAppFolder" Guid="{97AEE8D5-043A-4D0B-A3B9-112A73FBC7E0}">
+      <CreateFolder />
+    </Component>
+    <Component Id="BackupRootFolder" Directory="ProgramDataBackupsFolder" Guid="{27D6125C-8201-47C2-8B62-01652CF65364}">
+      <CreateFolder />
+    </Component>
+    <Component Id="LogFolder" Directory="ProgramDataLogsFolder" Guid="{81DF8995-2105-439C-857D-4976C2B5325C}">
+      <CreateFolder />
+    </Component>
+    <Component Id="JobsFolder" Directory="ProgramDataJobsFolder" Guid="{24E9B1FC-B5D6-46FB-B830-FB793340A316}">
+      <CreateFolder />
+    </Component>
+    <Component Id="CertsFolder" Directory="ProgramDataCertsFolder" Guid="{BA083507-BBF2-4F01-A571-5C6B9BC0C9DC}">
+      <CreateFolder />
+    </Component>
+    <Component Id="MachineConfiguration" Directory="INSTALLFOLDER" Guid="{604FD031-116D-417F-92AA-4625BD2E6F70}">
+      <Environment Id="EnvApiToken" Name="HyperVBackupAgent__ApiToken" Value="[API_TOKEN]" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvBackupRoot" Name="HyperVBackupAgent__BackupRoot" Value="[BACKUP_ROOT]" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvHyperVProvider" Name="HyperVBackupAgent__HyperVProvider" Value="PowerShell" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvRctProvider" Name="HyperVBackupAgent__RctProvider" Value="Native" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvAllowedPathRoot" Name="HyperVBackupAgent__AllowedPathRoots__0" Value="[BACKUP_ROOT]" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvApiConfigureKestrel" Name="HyperVBackupAgent__Api__ConfigureKestrel" Value="true" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvApiHttpPort" Name="HyperVBackupAgent__Api__HttpPort" Value="5080" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvApiHttpsPort" Name="HyperVBackupAgent__Api__HttpsPort" Value="5443" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvCertStorePath" Name="HyperVBackupAgent__Api__Certificate__StorePath" Value="C:\ProgramData\HyperVBackupAgent\certs\agent-api.pfx" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvJobsStorePath" Name="HyperVBackupAgent__Api__Jobs__StorePath" Value="C:\ProgramData\HyperVBackupAgent\jobs\api-jobs.json" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvLogDirectory" Name="HyperVBackupAgent__Api__Logging__Directory" Value="C:\ProgramData\HyperVBackupAgent\logs" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvSchedulerEnabled" Name="HyperVBackupAgent__Scheduler__Enabled" Value="true" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvSchedulerBackupRoot" Name="HyperVBackupAgent__Scheduler__BackupRoot" Value="[BACKUP_ROOT]" Action="set" System="yes" Part="all" />
+    </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

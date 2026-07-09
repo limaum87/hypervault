@@ -264,6 +264,32 @@ Run from an elevated PowerShell session after publishing:
 .\scripts\install-windows-services.ps1 -PublishRoot .\artifacts\publish
 ```
 
+For customer/server deployment, prefer the MSI. It publishes both services as self-contained `win-x64` executables and packages them with WiX:
+
+```powershell
+.\scripts\build-msi.ps1 -ProductVersion 1.0.0
+```
+
+The MSI is created under:
+
+```text
+installer/HyperVBackupAgent.Installer/bin/x64/Release/HyperVBackupAgent.msi
+```
+
+Install from an elevated shell:
+
+```powershell
+msiexec /i .\HyperVBackupAgent.msi API_TOKEN="<token-known-by-central-server>"
+```
+
+Optional install property:
+
+```powershell
+msiexec /i .\HyperVBackupAgent.msi API_TOKEN="<token>" BACKUP_ROOT="D:\HyperVBackups"
+```
+
+The MSI installs and starts both automatic services, creates `C:\ProgramData\HyperVBackupAgent` folders, configures the API for HTTPS on port `5443`, enables the scheduler, and sets production providers through machine environment variables. `API_TOKEN` is required because the central server must send the same bearer token when calling the local agent API.
+
 ## Scheduler
 
 The scheduler is enabled by default for automatic backups. Configure its schedule under:

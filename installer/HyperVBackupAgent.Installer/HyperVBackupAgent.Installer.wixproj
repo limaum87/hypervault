@@ -1,0 +1,17 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+
+  <PropertyGroup>
+    <OutputName>HyperVBackupAgent</OutputName>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
+    <ApiPublishDir Condition="'$(ApiPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\api</ApiPublishDir>
+    <SchedulerPublishDir Condition="'$(SchedulerPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\scheduler</SchedulerPublishDir>
+    <DefineConstants>
+      ProductVersion=$(ProductVersion);
+      ApiPublishDir=$(ApiPublishDir);
+      SchedulerPublishDir=$(SchedulerPublishDir)
+    </DefineConstants>
+  </PropertyGroup>
+
+</Project>
