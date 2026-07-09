@@ -67,6 +67,15 @@ public sealed record BackupResult(
     string Path,
     string? Error = null);
 
+public sealed record RestorePointSummary(
+    string ChainId,
+    string BackupId,
+    BackupType Type,
+    DateTimeOffset CreatedAt,
+    BackupStatus Status,
+    string ChainPath,
+    string? ParentBackupId = null);
+
 public sealed record VerifyResult(
     bool IsValid,
     IReadOnlyList<string> Errors,

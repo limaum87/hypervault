@@ -147,13 +147,41 @@ public sealed class BackupEngineTests
         Assert.Empty(results);
     }
 
-    private static ServiceProvider BuildServices(string simulationRoot)
+    [Fact]
+    public async Task RestorePointCatalogListsPointsForVm()
     {
+        var root = CreateTempDirectory();
+        var vmRoot = Path.Combine(root, "vms", "ERP01");
+        Directory.CreateDirectory(vmRoot);
+        await File.WriteAllTextAsync(Path.Combine(vmRoot, "disk-0.bin"), "full-backup-content");
+
+        var destination = Path.Combine(root, "backups");
+        using var services = BuildServices(Path.Combine(root, "vms"), destination);
+
+        await services.GetRequiredService<IBackupEngine>()
+            .RunFullBackupAsync(new BackupRequest("ERP01", destination));
+
+        var restorePoints = await services.GetRequiredService<IRestorePointCatalog>()
+            .ListRestorePointsAsync("ERP01");
+
+        var restorePoint = Assert.Single(restorePoints);
+        Assert.Equal(BackupType.Full, restorePoint.Type);
+        Assert.True(Directory.Exists(restorePoint.ChainPath));
+    }
+
+    private static ServiceProvider BuildServices(string simulationRoot, string? backupRoot = null)
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["HyperVBackupAgent:SimulationRoot"] = simulationRoot
+        };
+        if (backupRoot is not null)
+        {
+            settings["HyperVBackupAgent:BackupRoot"] = backupRoot;
+        }
+
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["HyperVBackupAgent:SimulationRoot"] = simulationRoot
-            })
+            .AddInMemoryCollection(settings)
             .Build();
 
         return new ServiceCollection()

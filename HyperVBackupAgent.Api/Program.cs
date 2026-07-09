@@ -47,7 +47,8 @@ app.MapGet("/vms/{id}", async (string id, IHyperVService hyperV, CancellationTok
     var vm = await hyperV.GetVmAsync(id, ct);
     return vm is null ? Results.NotFound() : Results.Ok(vm);
 });
-app.MapGet("/vms/{id}/restore-points", () => Results.Problem("Use list-restore-points in CLI until repository indexing is implemented.", statusCode: 501));
+app.MapGet("/vms/{id}/restore-points", async (string id, IRestorePointCatalog catalog, CancellationToken ct) =>
+    Results.Ok(await catalog.ListRestorePointsAsync(id, ct)));
 app.MapPost("/backups/full", async (BackupRequest request, IBackupEngine engine, CancellationToken ct) => Results.Ok(await engine.RunFullBackupAsync(request, ct)));
 app.MapPost("/backups/incremental", async (BackupRequest request, IBackupEngine engine, CancellationToken ct) => Results.Ok(await engine.RunIncrementalBackupAsync(request, ct)));
 app.MapPost("/backups/verify-chain", async (VerifyChainRequest request, IVerifyEngine engine, CancellationToken ct) => Results.Ok(await engine.VerifyChainAsync(request.ChainPath, ct)));

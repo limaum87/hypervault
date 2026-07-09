@@ -9,6 +9,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddHyperVBackupAgent(this IServiceCollection services, IConfiguration configuration)
     {
         var provider = configuration["HyperVBackupAgent:HyperVProvider"] ?? "Simulation";
+        var backupRoot = configuration["HyperVBackupAgent:BackupRoot"]
+            ?? Path.Combine(AppContext.BaseDirectory, "backups");
         var simulationRoot = configuration["HyperVBackupAgent:SimulationRoot"]
             ?? Path.Combine(AppContext.BaseDirectory, "sim-vms");
 
@@ -25,6 +27,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRctService, SimulatedRctService>();
         services.AddSingleton<IStorageProvider, FileStorageProvider>();
         services.AddSingleton<IMetadataRepository, JsonMetadataRepository>();
+        services.AddSingleton<IRestorePointCatalog>(serviceProvider =>
+            new FileSystemRestorePointCatalog(backupRoot, serviceProvider.GetRequiredService<IMetadataRepository>()));
         services.AddSingleton<IHashService, HashService>();
         services.AddSingleton<IBackupEngine, BackupEngine>();
         services.AddSingleton<IVerifyEngine, VerifyEngine>();
