@@ -79,6 +79,34 @@ public sealed class BackupEngineTests
     }
 
     [Fact]
+    public async Task RestoreCanTargetFullBackupBeforeIncrementals()
+    {
+        var root = CreateTempDirectory();
+        var vmRoot = Path.Combine(root, "vms", "ERP01");
+        Directory.CreateDirectory(vmRoot);
+        var sourceDisk = Path.Combine(vmRoot, "disk-0.bin");
+        await File.WriteAllBytesAsync(sourceDisk, Enumerable.Range(0, 4096).Select(_ => (byte)'A').ToArray());
+
+        var destination = Path.Combine(root, "backups");
+        var services = BuildServices(Path.Combine(root, "vms"));
+        var full = await services.GetRequiredService<IBackupEngine>()
+            .RunFullBackupAsync(new BackupRequest("ERP01", destination));
+
+        await File.WriteAllBytesAsync(sourceDisk, Enumerable.Range(0, 4096).Select(_ => (byte)'B').ToArray());
+        await services.GetRequiredService<IBackupEngine>()
+            .RunIncrementalBackupAsync(new BackupRequest("ERP01", destination));
+
+        var restoreDestination = Path.Combine(root, "restore-full");
+        await services.GetRequiredService<IRestoreEngine>()
+            .RestoreAsync(new RestoreRequest(full.Path, restoreDestination, "ERP01-Restored", TargetBackupId: full.BackupId));
+
+        var restoredDisk = Directory.EnumerateFiles(restoreDestination).Single();
+        var restoredBytes = await File.ReadAllBytesAsync(restoredDisk);
+
+        Assert.All(restoredBytes, value => Assert.Equal((byte)'A', value));
+    }
+
+    [Fact]
     public async Task HashServiceComputesSha256()
     {
         var root = CreateTempDirectory();

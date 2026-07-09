@@ -48,7 +48,8 @@ public sealed record RestoreRequest(
     string RestorePoint,
     string Destination,
     string NewName,
-    bool OverwriteExisting = false);
+    bool OverwriteExisting = false,
+    string? TargetBackupId = null);
 
 public sealed record BackupResult(
     string BackupId,

@@ -29,7 +29,7 @@ try
         "backup-inc" => await BackupIncrementalAsync(Required(args, "--vm"), Required(args, "--destination")),
         "verify-chain" => await VerifyChainAsync(Required(args, "--chain-id")),
         "verify-restore" => await VerifyRestoreAsync(Required(args, "--restore-point")),
-        "restore" => await RestoreAsync(Required(args, "--restore-point"), Required(args, "--destination"), Required(args, "--new-name"), HasFlag(args, "--overwrite")),
+        "restore" => await RestoreAsync(Required(args, "--restore-point"), Required(args, "--destination"), Required(args, "--new-name"), HasFlag(args, "--overwrite"), Optional(args, "--backup-id")),
         "cleanup-temp-checkpoints" => NotImplemented("cleanup-temp-checkpoints"),
         "list-restore-points" => await ListRestorePointsAsync(Required(args, "--chain-id")),
         _ => Unknown(args[0])
@@ -110,9 +110,9 @@ async Task<int> VerifyRestoreAsync(string restorePointPath)
     return result.IsValid ? 0 : 1;
 }
 
-async Task<int> RestoreAsync(string restorePoint, string destination, string newName, bool overwrite)
+async Task<int> RestoreAsync(string restorePoint, string destination, string newName, bool overwrite, string? backupId)
 {
-    await services.GetRequiredService<IRestoreEngine>().RestoreAsync(new RestoreRequest(restorePoint, destination, newName, overwrite));
+    await services.GetRequiredService<IRestoreEngine>().RestoreAsync(new RestoreRequest(restorePoint, destination, newName, overwrite, backupId));
     Console.WriteLine($"Restore materialized at {Path.GetFullPath(destination)} as {newName}.");
     return 0;
 }
@@ -137,6 +137,12 @@ static string Required(string[] args, string name)
     }
 
     return args[index + 1];
+}
+
+static string? Optional(string[] args, string name)
+{
+    var index = Array.IndexOf(args, name);
+    return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
 }
 
 static bool HasFlag(string[] args, string name) => args.Contains(name, StringComparer.OrdinalIgnoreCase);
@@ -178,7 +184,7 @@ static void PrintHelp()
       backup-inc --vm "ERP01" --destination "C:\backup\hyperv"
       verify-chain --chain-id "C:\backup\host\vm\chain-..."
       verify-restore --restore-point "C:\backup\host\vm\chain-..."
-      restore --restore-point "C:\backup\host\vm\chain-..." --destination "C:\restore" --new-name "ERP01-Restore-Test" [--overwrite]
+      restore --restore-point "C:\backup\host\vm\chain-..." --destination "C:\restore" --new-name "ERP01-Restore-Test" [--backup-id "inc-0001"] [--overwrite]
       list-restore-points --chain-id "C:\backup\host\vm\chain-..."
     """);
 }

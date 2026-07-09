@@ -16,8 +16,9 @@ public sealed class RestoreEngine : IRestoreEngine
     public async Task RestoreAsync(RestoreRequest request, CancellationToken cancellationToken = default)
     {
         var chain = await _metadata.LoadChainAsync(request.RestorePoint, cancellationToken);
-        var full = chain.RestorePoints.First(point => point.Type == BackupType.Full);
-        var increments = chain.RestorePoints
+        var restorePoints = SelectRestorePoints(chain, request.TargetBackupId);
+        var full = restorePoints.First(point => point.Type == BackupType.Full);
+        var increments = restorePoints
             .Where(point => point.Type == BackupType.Incremental)
             .OrderBy(point => point.CreatedAt)
             .ToArray();
@@ -49,6 +50,28 @@ public sealed class RestoreEngine : IRestoreEngine
         }
 
         await _hyperV.CreateVmFromDisksAsync(request.NewName, restoredDisks, request.OverwriteExisting, cancellationToken);
+    }
+
+    private static IReadOnlyList<BackupMetadata> SelectRestorePoints(BackupChainMetadata chain, string? targetBackupId)
+    {
+        if (chain.RestorePoints.Count == 0)
+        {
+            throw new InvalidOperationException($"Chain {chain.ChainId} has no restore points.");
+        }
+
+        var ordered = chain.RestorePoints.OrderBy(point => point.CreatedAt).ToArray();
+        if (string.IsNullOrWhiteSpace(targetBackupId))
+        {
+            return ordered;
+        }
+
+        var targetIndex = Array.FindIndex(ordered, point => string.Equals(point.BackupId, targetBackupId, StringComparison.OrdinalIgnoreCase));
+        if (targetIndex < 0)
+        {
+            throw new InvalidOperationException($"Restore point '{targetBackupId}' was not found in chain {chain.ChainId}.");
+        }
+
+        return ordered.Take(targetIndex + 1).ToArray();
     }
 
     private static async Task ApplyBlockFileAsync(string diskPath, string blockFilePath, CancellationToken cancellationToken)
