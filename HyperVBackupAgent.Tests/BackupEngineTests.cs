@@ -49,6 +49,31 @@ public sealed class BackupEngineTests
     }
 
     [Fact]
+    public async Task VerifyRestoreReconstructsBackupInTemporaryDirectory()
+    {
+        var root = CreateTempDirectory();
+        var vmRoot = Path.Combine(root, "vms", "ERP01");
+        Directory.CreateDirectory(vmRoot);
+        var sourceDisk = Path.Combine(vmRoot, "disk-0.bin");
+        await File.WriteAllBytesAsync(sourceDisk, Enumerable.Range(0, 4096).Select(_ => (byte)'A').ToArray());
+
+        var destination = Path.Combine(root, "backups");
+        using var services = BuildServices(Path.Combine(root, "vms"));
+        var full = await services.GetRequiredService<IBackupEngine>()
+            .RunFullBackupAsync(new BackupRequest("ERP01", destination));
+
+        await File.WriteAllBytesAsync(sourceDisk, Enumerable.Range(0, 4096).Select(_ => (byte)'B').ToArray());
+        await services.GetRequiredService<IBackupEngine>()
+            .RunIncrementalBackupAsync(new BackupRequest("ERP01", destination));
+
+        var verify = await services.GetRequiredService<IVerifyEngine>()
+            .VerifyRestoreAsync(full.Path, keepTemporaryFiles: false);
+
+        Assert.True(verify.IsValid, string.Join(Environment.NewLine, verify.Errors));
+        Assert.Contains(verify.Warnings, warning => warning.Contains("read-only mount validation was skipped", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task RestoreAppliesIncrementalBlocks()
     {
         var root = CreateTempDirectory();

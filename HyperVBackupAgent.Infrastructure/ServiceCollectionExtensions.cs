@@ -14,9 +14,9 @@ public static class ServiceCollectionExtensions
         var simulationRoot = configuration["HyperVBackupAgent:SimulationRoot"]
             ?? Path.Combine(AppContext.BaseDirectory, "sim-vms");
 
+        services.AddSingleton<IPowerShellRunner, PowerShellRunner>();
         if (string.Equals(provider, "PowerShell", StringComparison.OrdinalIgnoreCase))
         {
-            services.AddSingleton<IPowerShellRunner, PowerShellRunner>();
             services.AddSingleton<IHyperVService, PowerShellHyperVService>();
         }
         else
@@ -31,6 +31,8 @@ public static class ServiceCollectionExtensions
             new FileSystemRestorePointCatalog(backupRoot, serviceProvider.GetRequiredService<IMetadataRepository>()));
         services.AddSingleton<IRetentionService, FileSystemRetentionService>();
         services.AddSingleton<IHashService, HashService>();
+        services.AddSingleton<RestoreMaterializer>();
+        services.AddSingleton<VhdReadOnlyMountValidator>();
         services.AddSingleton<IBackupEngine, BackupEngine>();
         services.AddSingleton<IVerifyEngine, VerifyEngine>();
         services.AddSingleton<IRestoreEngine, RestoreEngine>();

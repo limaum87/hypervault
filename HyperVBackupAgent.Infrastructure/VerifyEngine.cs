@@ -6,11 +6,19 @@ public sealed class VerifyEngine : IVerifyEngine
 {
     private readonly IMetadataRepository _metadata;
     private readonly IHashService _hash;
+    private readonly RestoreMaterializer _materializer;
+    private readonly VhdReadOnlyMountValidator _mountValidator;
 
-    public VerifyEngine(IMetadataRepository metadata, IHashService hash)
+    public VerifyEngine(
+        IMetadataRepository metadata,
+        IHashService hash,
+        RestoreMaterializer materializer,
+        VhdReadOnlyMountValidator mountValidator)
     {
         _metadata = metadata;
         _hash = hash;
+        _materializer = materializer;
+        _mountValidator = mountValidator;
     }
 
     public async Task<VerifyResult> VerifyChainAsync(string chainPath, CancellationToken cancellationToken = default)
@@ -78,6 +86,50 @@ public sealed class VerifyEngine : IVerifyEngine
     public async Task<VerifyResult> VerifyRestoreAsync(string restorePointPath, bool keepTemporaryFiles, CancellationToken cancellationToken = default)
     {
         var chainResult = await VerifyChainAsync(restorePointPath, cancellationToken);
-        return chainResult with { Warnings = chainResult.Warnings.Concat(["VHDX mount validation is not implemented in this MVP scaffold."]).ToArray() };
+        if (!chainResult.IsValid)
+        {
+            return chainResult;
+        }
+
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "hvbackup-agent-verify", Guid.NewGuid().ToString("N"));
+        var warnings = chainResult.Warnings.ToList();
+        try
+        {
+            var materialized = await _materializer.MaterializeAsync(
+                new RestoreRequest(restorePointPath, tempDirectory, "verify-restore", OverwriteExisting: true),
+                cancellationToken);
+
+            if (materialized.DiskPaths.Count == 0)
+            {
+                return chainResult with { IsValid = false, Errors = ["Restore verification produced no disks."] };
+            }
+
+            foreach (var diskPath in materialized.DiskPaths)
+            {
+                if (!File.Exists(diskPath))
+                {
+                    return chainResult with { IsValid = false, Errors = [$"Restore verification did not produce expected disk: {diskPath}"] };
+                }
+            }
+
+            warnings.AddRange(await _mountValidator.ValidateAsync(materialized.DiskPaths, cancellationToken));
+            if (keepTemporaryFiles)
+            {
+                warnings.Add($"Temporary restore verification files kept at {tempDirectory}.");
+            }
+
+            return chainResult with { Warnings = warnings };
+        }
+        catch (Exception ex)
+        {
+            return chainResult with { IsValid = false, Errors = [$"Restore verification failed: {ex.Message}"], Warnings = warnings };
+        }
+        finally
+        {
+            if (!keepTemporaryFiles && Directory.Exists(tempDirectory))
+            {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
     }
 }
