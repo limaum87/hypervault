@@ -69,6 +69,13 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/agent/certificate", (IConfiguration configuration, IWebHostEnvironment environment) =>
+{
+    var certificate = ApiCertificateManager.TryGetCertificateInfo(configuration, environment.ContentRootPath);
+    return certificate is null
+        ? Results.NotFound(new ApiError("certificate_not_found", "API certificate has not been generated or configured yet.", string.Empty))
+        : Results.Ok(certificate);
+});
 app.MapGet("/vms", async (IHyperVService hyperV, CancellationToken ct) => Results.Ok(await hyperV.ListVmsAsync(ct)));
 app.MapGet("/vms/{id}", async (string id, IHyperVService hyperV, CancellationToken ct) =>
 {

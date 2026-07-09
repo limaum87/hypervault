@@ -34,6 +34,7 @@ Ja implementado:
 - Reuso correto dos servicos `Core` e `Infrastructure`, sem chamar o executavel CLI.
 - Validacao central de paths absolutos para endpoints que recebem caminhos.
 - Respostas de erro em JSON para token ausente/invalido, request invalido, conflito, nao encontrado e erro inesperado.
+- Geracao automatica de certificado self-signed local para HTTPS, com endpoint autenticado para expor fingerprint.
 
 ## P0 - Necessario Antes de Producao
 
@@ -55,6 +56,8 @@ Criterio de aceite:
 Observacao:
 
 - A secao `HyperVBackupAgent:Api` controla `ConfigureKestrel`, `HttpPort`, `HttpsPort` e certificado PFX.
+- Se `Certificate:AutoGenerate=true` e `Certificate:Path` estiver vazio, o agente cria/reusa um PFX local.
+- `GET /agent/certificate` retorna o fingerprint SHA-256 para cadastro no servidor central.
 - Em desenvolvimento, `ConfigureKestrel` pode permanecer `false` para usar `launchSettings.json`.
 
 ### 2. Validar paths recebidos pela API
@@ -258,6 +261,7 @@ Criterio de aceite:
 
 - Criar fluxo futuro de enrollment.
 - Trocar token manual por credencial emitida pelo servidor central.
+- Usar fingerprint SHA-256 do certificado local no primeiro cadastro do agente.
 
 ### 15. Considerar mTLS
 

@@ -1,5 +1,3 @@
-using System.Security.Cryptography.X509Certificates;
-
 namespace HyperVBackupAgent.Api;
 
 public static class ApiEndpointConfiguration
@@ -14,8 +12,6 @@ public static class ApiEndpointConfiguration
 
         var httpPort = section.GetValue<int?>("HttpPort");
         var httpsPort = section.GetValue<int?>("HttpsPort") ?? 5443;
-        var certificatePath = section["Certificate:Path"];
-        var certificatePassword = section["Certificate:Password"];
 
         builder.WebHost.ConfigureKestrel(options =>
         {
@@ -26,16 +22,18 @@ public static class ApiEndpointConfiguration
 
             options.ListenAnyIP(httpsPort, listenOptions =>
             {
-                if (string.IsNullOrWhiteSpace(certificatePath))
+                var certificateSection = section.GetSection("Certificate");
+                var certificatePath = certificateSection["Path"];
+                if (string.IsNullOrWhiteSpace(certificatePath) &&
+                    !certificateSection.GetValue("AutoGenerate", true))
                 {
                     listenOptions.UseHttps();
                     return;
                 }
 
-                var certificate = new X509Certificate2(
-                    certificatePath,
-                    certificatePassword,
-                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+                var certificate = ApiCertificateManager.LoadConfiguredCertificate(
+                    builder.Configuration,
+                    builder.Environment.ContentRootPath);
                 listenOptions.UseHttps(certificate);
             });
         });

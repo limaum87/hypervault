@@ -73,8 +73,12 @@ The main configuration section is `HyperVBackupAgent`.
       "HttpPort": 5080,
       "HttpsPort": 5443,
       "Certificate": {
+        "AutoGenerate": true,
         "Path": "",
-        "Password": ""
+        "Password": "",
+        "StorePath": "",
+        "Subject": "CN=HyperVBackupAgent API",
+        "ValidDays": 825
       }
     },
     "HyperVProvider": "Simulation",
@@ -165,7 +169,7 @@ Authorization: Bearer <token>
 
 Set `HyperVBackupAgent:ApiToken` before exposing the API.
 
-For production hosting, configure fixed Kestrel endpoints and a certificate:
+For production hosting, configure fixed Kestrel endpoints. The default production-friendly path is to let the agent create a local self-signed certificate and register its fingerprint in the central server:
 
 ```json
 {
@@ -175,19 +179,23 @@ For production hosting, configure fixed Kestrel endpoints and a certificate:
       "HttpPort": 5080,
       "HttpsPort": 5443,
       "Certificate": {
-        "Path": "C:\\ProgramData\\HyperVBackupAgent\\certs\\agent-api.pfx",
-        "Password": "change-me"
+        "AutoGenerate": true,
+        "StorePath": "C:\\ProgramData\\HyperVBackupAgent\\certs\\agent-api.pfx",
+        "Password": ""
       }
     }
   }
 }
 ```
 
-If `Certificate:Path` is empty, Kestrel uses the default HTTPS certificate available to the process. In production, prefer an explicit PFX installed with restricted file permissions. Use `HyperVBackupAgent:AllowedPathRoots` to restrict API-supplied backup, restore, and verification paths.
+When `AutoGenerate=true` and `Certificate:Path` is empty, the API creates or reuses a local PFX. On Windows, the default location is `C:\ProgramData\HyperVBackupAgent\certs\agent-api.pfx`. The authenticated endpoint `GET /agent/certificate` returns the SHA-256 fingerprint that the central server should store during enrollment.
+
+If a customer already has a certificate, set `Certificate:Path` and `Certificate:Password` to use that PFX instead. If `AutoGenerate=false` and `Certificate:Path` is empty, Kestrel falls back to the default HTTPS certificate available to the process. Use `HyperVBackupAgent:AllowedPathRoots` to restrict API-supplied backup, restore, and verification paths.
 
 Implemented endpoints:
 
 - `GET /health`
+- `GET /agent/certificate`
 - `GET /vms`
 - `GET /vms/{id}`
 - `GET /vms/{id}/restore-points`
