@@ -345,7 +345,7 @@ Incremental `.blocks` files contain changed block ranges and raw block data. Res
 - `SimulatedRctService`: deterministic simulation for local tests.
 - `NativeHyperVRctService`: native/Hyper-V path using `virtdisk.dll` and `Msvm_ImageManagementService.GetVirtualDiskChanges`.
 
-For production Hyper-V hosts, the agent attempts to prepare RCT automatically before backups when a disk does not yet expose a change-tracking id. The PowerShell Hyper-V provider checks the VM configuration version and, for compatible VMs, creates and removes a temporary production checkpoint so Hyper-V can initialize its reference-point/RCT state through the supported platform workflow.
+For production Hyper-V hosts, the agent validates RCT against checkpoint-consistent disks, not the active VHDX path, because Hyper-V exposes the backup-safe disk view only after a production checkpoint. Incremental backup preflight creates and removes a temporary production checkpoint for this validation. When a disk does not yet expose a change-tracking id, the agent attempts online RCT preparation through the Hyper-V reference-point service.
 
 If a VM configuration version is too old for Hyper-V RCT, backup preflight returns an explicit error indicating that the VM must be shut down and upgraded with `Update-VMVersion`. That offline step is expected only for older VMs; compatible VMs should not require manual XML edits or a stop/start just to initialize RCT.
 

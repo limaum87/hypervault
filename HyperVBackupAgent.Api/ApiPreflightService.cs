@@ -45,46 +45,80 @@ public sealed class ApiPreflightService
 
         if (request.Type == BackupType.Incremental)
         {
-            var attemptedPreparation = false;
-            foreach (var disk in vm.Disks)
-            {
-                var available = await _rct.IsAvailableAsync(vm, disk, cancellationToken);
-                if (!available)
-                {
-                    if (!attemptedPreparation)
-                    {
-                        attemptedPreparation = true;
-                        var preparation = await _hyperV.PrepareForRctAsync(vm.Id, cancellationToken);
-                        details["rctPreparationReady"] = preparation.IsReady.ToString();
-                        details["rctRequiresOfflineUpgrade"] = preparation.RequiresOfflineUpgrade.ToString();
-                        if (!string.IsNullOrWhiteSpace(preparation.VmVersion))
-                        {
-                            details["vmVersion"] = preparation.VmVersion;
-                        }
-
-                        if (preparation.IsReady)
-                        {
-                            warnings.Add(preparation.Message);
-                            available = await _rct.IsAvailableAsync(vm, disk, cancellationToken);
-                        }
-                        else
-                        {
-                            errors.Add(preparation.Message);
-                        }
-                    }
-
-                    if (!available)
-                    {
-                        var message = attemptedPreparation
-                            ? $"RCT is not available for disk '{disk.Id}' even after online Hyper-V reference point preparation. Check Hyper-V RCT support, pending checkpoints, and host event logs."
-                            : $"RCT is not available for disk '{disk.Id}'.";
-                        errors.Add(message);
-                    }
-                }
-            }
+            await ValidateIncrementalRctAsync(vm, errors, warnings, details, cancellationToken);
         }
 
         return new PreflightResult(errors.Count == 0, errors, warnings, details);
+    }
+
+    private async Task ValidateIncrementalRctAsync(
+        VirtualMachineInfo vm,
+        List<string> errors,
+        List<string> warnings,
+        Dictionary<string, string> details,
+        CancellationToken cancellationToken)
+    {
+        if (await CheckCheckpointRctAsync(vm, details, errors: null, cancellationToken))
+        {
+            return;
+        }
+
+        var preparation = await _hyperV.PrepareForRctAsync(vm.Id, cancellationToken);
+        details["rctPreparationReady"] = preparation.IsReady.ToString();
+        details["rctRequiresOfflineUpgrade"] = preparation.RequiresOfflineUpgrade.ToString();
+        if (!string.IsNullOrWhiteSpace(preparation.VmVersion))
+        {
+            details["vmVersion"] = preparation.VmVersion;
+        }
+
+        if (!preparation.IsReady)
+        {
+            errors.Add(preparation.Message);
+            return;
+        }
+
+        warnings.Add(preparation.Message);
+        await CheckCheckpointRctAsync(vm, details, errors, cancellationToken);
+    }
+
+    private async Task<bool> CheckCheckpointRctAsync(
+        VirtualMachineInfo vm,
+        Dictionary<string, string> details,
+        List<string>? errors,
+        CancellationToken cancellationToken)
+    {
+        var checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-Preflight-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}", cancellationToken);
+        try
+        {
+            var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
+            details["rctCheckedDiskCount"] = consistentDisks.Count.ToString();
+            return await AllDisksHaveRctAsync(vm, consistentDisks, errors, cancellationToken);
+        }
+        finally
+        {
+            await _hyperV.RemoveCheckpointAsync(vm.Id, checkpointId, cancellationToken);
+        }
+    }
+
+    private async Task<bool> AllDisksHaveRctAsync(
+        VirtualMachineInfo vm,
+        IReadOnlyList<VirtualDiskInfo> disks,
+        List<string>? errors,
+        CancellationToken cancellationToken)
+    {
+        var allAvailable = true;
+        foreach (var disk in disks)
+        {
+            if (await _rct.IsAvailableAsync(vm, disk, cancellationToken))
+            {
+                continue;
+            }
+
+            allAvailable = false;
+            errors?.Add($"RCT is not available for checkpoint-consistent disk '{disk.Id}'.");
+        }
+
+        return allAvailable;
     }
 
     public async Task<PreflightResult> CheckRestoreAsync(RestorePreflightRequest request, CancellationToken cancellationToken = default)

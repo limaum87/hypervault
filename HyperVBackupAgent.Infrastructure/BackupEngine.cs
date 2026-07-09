@@ -36,9 +36,9 @@ public sealed class BackupEngine : IBackupEngine
         string? checkpointId = null;
         try
         {
-            await EnsureRctReadyAsync(vm, cancellationToken);
             checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-{backupId}", cancellationToken);
             var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
+            await EnsureRctReadyAsync(vm, consistentDisks, cancellationToken);
             var rctReferenceIds = new Dictionary<string, string>();
             foreach (var disk in consistentDisks)
             {
@@ -117,9 +117,9 @@ public sealed class BackupEngine : IBackupEngine
         string? checkpointId = null;
         try
         {
-            await EnsureRctReadyAsync(vm, cancellationToken);
             checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-{backupId}", cancellationToken);
             var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
+            await EnsureRctReadyAsync(vm, consistentDisks, cancellationToken);
             var backup = new BackupMetadata
             {
                 BackupId = backupId,
@@ -169,9 +169,9 @@ public sealed class BackupEngine : IBackupEngine
         => await _hyperV.GetVmAsync(nameOrId, cancellationToken)
             ?? throw new InvalidOperationException($"VM '{nameOrId}' was not found.");
 
-    private async Task EnsureRctReadyAsync(VirtualMachineInfo vm, CancellationToken cancellationToken)
+    private async Task EnsureRctReadyAsync(VirtualMachineInfo vm, IReadOnlyList<VirtualDiskInfo> disks, CancellationToken cancellationToken)
     {
-        foreach (var disk in vm.Disks)
+        foreach (var disk in disks)
         {
             if (await _rct.IsAvailableAsync(vm, disk, cancellationToken))
             {
