@@ -1,6 +1,7 @@
 using HyperVBackupAgent.Core;
 using HyperVBackupAgent.Api;
 using HyperVBackupAgent.Infrastructure;
+using Microsoft.AspNetCore.Mvc;
 using Serilog;
 using Serilog.Context;
 using Serilog.Formatting.Compact;
@@ -126,7 +127,7 @@ app.MapGet("/jobs/{id}", (string id, ApiJobService jobs) =>
 });
 app.MapPost("/jobs/{id}/cancel", (string id, ApiJobService jobs) =>
     jobs.Cancel(id) ? Results.Accepted($"/jobs/{id}") : Results.NotFound());
-app.MapPost("/jobs/backup-full", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
+app.MapPost("/jobs/backup-full", ([FromBody] BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     var job = jobs.Enqueue("backup-full", validated.VmNameOrId, validated.Destination, async ct =>
@@ -141,7 +142,7 @@ app.MapPost("/jobs/backup-full", (BackupRequest request, IBackupEngine engine, A
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/backup-incremental", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
+app.MapPost("/jobs/backup-incremental", ([FromBody] BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     var job = jobs.Enqueue("backup-incremental", validated.VmNameOrId, validated.Destination, async ct =>
@@ -156,7 +157,7 @@ app.MapPost("/jobs/backup-incremental", (BackupRequest request, IBackupEngine en
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/verify-chain", (VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
+app.MapPost("/jobs/verify-chain", ([FromBody] VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var chainPath = paths.ValidateAbsolutePath(request.ChainPath, nameof(request.ChainPath));
     var job = jobs.Enqueue("verify-chain", null, chainPath, async ct =>
@@ -171,7 +172,7 @@ app.MapPost("/jobs/verify-chain", (VerifyChainRequest request, IVerifyEngine eng
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/verify-restore", (VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
+app.MapPost("/jobs/verify-restore", ([FromBody] VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var restorePointPath = paths.ValidateAbsolutePath(request.RestorePointPath, nameof(request.RestorePointPath));
     var job = jobs.Enqueue("verify-restore", null, restorePointPath, async ct =>
@@ -186,7 +187,7 @@ app.MapPost("/jobs/verify-restore", (VerifyRestoreRequest request, IVerifyEngine
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
+app.MapPost("/jobs/restore", ([FromBody] RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var validated = request with
     {
@@ -200,12 +201,12 @@ app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, Api
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/backups/preflight", async (BackupPreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/backups/preflight", async ([FromBody] BackupPreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     return Results.Ok(await preflight.CheckBackupAsync(validated, ct));
 });
-app.MapPost("/restore/preflight", async (RestorePreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/restore/preflight", async ([FromBody] RestorePreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with
     {
@@ -233,21 +234,21 @@ app.MapGet("/vms/{id}/restore-points", async (
         : Enum.Parse<BackupStatus>(status, ignoreCase: true);
     return Results.Ok(await catalog.ListRestorePointsAsync(id, parsedStatus, from, to, ct));
 });
-app.MapPost("/backups/full", async (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/backups/full", async ([FromBody] BackupRequest request, IBackupEngine engine, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     return Results.Ok(await engine.RunFullBackupAsync(validated, ct));
 });
-app.MapPost("/backups/incremental", async (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/backups/incremental", async ([FromBody] BackupRequest request, IBackupEngine engine, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     return Results.Ok(await engine.RunIncrementalBackupAsync(validated, ct));
 });
-app.MapPost("/backups/verify-chain", async (VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/backups/verify-chain", async ([FromBody] VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, CancellationToken ct) =>
     Results.Ok(await engine.VerifyChainAsync(paths.ValidateAbsolutePath(request.ChainPath, nameof(request.ChainPath)), ct)));
-app.MapPost("/backups/verify-restore", async (VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/backups/verify-restore", async ([FromBody] VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, CancellationToken ct) =>
     Results.Ok(await engine.VerifyRestoreAsync(paths.ValidateAbsolutePath(request.RestorePointPath, nameof(request.RestorePointPath)), request.KeepTemporaryFiles, ct)));
-app.MapPost("/restore", async (RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/restore", async ([FromBody] RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with
     {
@@ -257,9 +258,9 @@ app.MapPost("/restore", async (RestoreRequest request, IRestoreEngine engine, Ap
     await engine.RestoreAsync(validated, ct);
     return Results.Accepted();
 });
-app.MapPost("/maintenance/cleanup-temp-checkpoints", async (CleanupCheckpointsRequest request, IHyperVService hyperV, CancellationToken ct) =>
+app.MapPost("/maintenance/cleanup-temp-checkpoints", async ([FromBody] CleanupCheckpointsRequest request, IHyperVService hyperV, CancellationToken ct) =>
     Results.Ok(await hyperV.CleanupTemporaryCheckpointsAsync(request.NamePrefix, ct)));
-app.MapPost("/maintenance/apply-retention", async (RetentionRequest request, IRetentionService retention, ApiPathValidator paths, CancellationToken ct) =>
+app.MapPost("/maintenance/apply-retention", async ([FromBody] RetentionRequest request, IRetentionService retention, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with { BackupRoot = paths.ValidateAbsolutePath(request.BackupRoot, nameof(request.BackupRoot)) };
     return Results.Ok(await retention.ApplyRetentionAsync(validated, ct));
