@@ -39,6 +39,8 @@ Ja implementado:
 
 ### 1. Configurar HTTPS real para o agente
 
+Status: implementado inicialmente.
+
 - Definir porta padrao da API.
 - Documentar configuracao de certificado.
 - Permitir configuracao por `appsettings.json` e variaveis de ambiente.
@@ -49,6 +51,11 @@ Criterio de aceite:
 - API sobe em porta fixa com HTTPS.
 - Cliente externo consegue chamar `/health`.
 - Endpoints protegidos continuam exigindo token.
+
+Observacao:
+
+- A secao `HyperVBackupAgent:Api` controla `ConfigureKestrel`, `HttpPort`, `HttpsPort` e certificado PFX.
+- Em desenvolvimento, `ConfigureKestrel` pode permanecer `false` para usar `launchSettings.json`.
 
 ### 2. Validar paths recebidos pela API
 

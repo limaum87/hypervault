@@ -67,6 +67,16 @@ The main configuration section is `HyperVBackupAgent`.
   "HyperVBackupAgent": {
     "ApiToken": "",
     "BackupRoot": "backups",
+    "AllowedPathRoots": [],
+    "Api": {
+      "ConfigureKestrel": false,
+      "HttpPort": 5080,
+      "HttpsPort": 5443,
+      "Certificate": {
+        "Path": "",
+        "Password": ""
+      }
+    },
     "HyperVProvider": "Simulation",
     "RctProvider": "Simulation",
     "SimulationRoot": "sim-vms"
@@ -154,6 +164,26 @@ Authorization: Bearer <token>
 ```
 
 Set `HyperVBackupAgent:ApiToken` before exposing the API.
+
+For production hosting, configure fixed Kestrel endpoints and a certificate:
+
+```json
+{
+  "HyperVBackupAgent": {
+    "Api": {
+      "ConfigureKestrel": true,
+      "HttpPort": 5080,
+      "HttpsPort": 5443,
+      "Certificate": {
+        "Path": "C:\\ProgramData\\HyperVBackupAgent\\certs\\agent-api.pfx",
+        "Password": "change-me"
+      }
+    }
+  }
+}
+```
+
+If `Certificate:Path` is empty, Kestrel uses the default HTTPS certificate available to the process. In production, prefer an explicit PFX installed with restricted file permissions. Use `HyperVBackupAgent:AllowedPathRoots` to restrict API-supplied backup, restore, and verification paths.
 
 Implemented endpoints:
 

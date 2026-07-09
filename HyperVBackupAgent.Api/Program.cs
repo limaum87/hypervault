@@ -9,6 +9,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+ApiEndpointConfiguration.ConfigureApiEndpoints(builder);
 builder.Host.UseSerilog();
 builder.Services.AddHyperVBackupAgent(builder.Configuration);
 builder.Services.AddSingleton<ApiPathValidator>();
