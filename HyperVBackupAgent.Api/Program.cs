@@ -13,6 +13,7 @@ ApiEndpointConfiguration.ConfigureApiEndpoints(builder);
 builder.Host.UseSerilog();
 builder.Services.AddHyperVBackupAgent(builder.Configuration);
 builder.Services.AddSingleton<ApiPathValidator>();
+builder.Services.AddSingleton<ApiJobService>();
 
 var app = builder.Build();
 
@@ -75,6 +76,88 @@ app.MapGet("/agent/certificate", (IConfiguration configuration, IWebHostEnvironm
     return certificate is null
         ? Results.NotFound(new ApiError("certificate_not_found", "API certificate has not been generated or configured yet.", string.Empty))
         : Results.Ok(certificate);
+});
+app.MapGet("/jobs", (ApiJobService jobs) => Results.Ok(jobs.ListJobs()));
+app.MapGet("/jobs/{id}", (string id, ApiJobService jobs) =>
+{
+    var job = jobs.GetJob(id);
+    return job is null ? Results.NotFound() : Results.Ok(job);
+});
+app.MapPost("/jobs/{id}/cancel", (string id, ApiJobService jobs) =>
+    jobs.Cancel(id) ? Results.Accepted($"/jobs/{id}") : Results.NotFound());
+app.MapPost("/jobs/backup-full", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+{
+    var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
+    var job = jobs.Enqueue("backup-full", validated.VmNameOrId, validated.Destination, async ct =>
+    {
+        var result = await engine.RunFullBackupAsync(validated, ct);
+        if (result.Status != BackupStatus.Completed)
+        {
+            throw new InvalidOperationException(result.Error ?? "Full backup failed.");
+        }
+
+        return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}");
+    });
+    return Results.Accepted($"/jobs/{job.JobId}", job);
+});
+app.MapPost("/jobs/backup-incremental", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+{
+    var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
+    var job = jobs.Enqueue("backup-incremental", validated.VmNameOrId, validated.Destination, async ct =>
+    {
+        var result = await engine.RunIncrementalBackupAsync(validated, ct);
+        if (result.Status != BackupStatus.Completed)
+        {
+            throw new InvalidOperationException(result.Error ?? "Incremental backup failed.");
+        }
+
+        return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}");
+    });
+    return Results.Accepted($"/jobs/{job.JobId}", job);
+});
+app.MapPost("/jobs/verify-chain", (VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+{
+    var chainPath = paths.ValidateAbsolutePath(request.ChainPath, nameof(request.ChainPath));
+    var job = jobs.Enqueue("verify-chain", null, chainPath, async ct =>
+    {
+        var result = await engine.VerifyChainAsync(chainPath, ct);
+        if (!result.IsValid)
+        {
+            throw new InvalidOperationException(string.Join("; ", result.Errors));
+        }
+
+        return new ApiJobOutcome(chainPath, "Chain verification completed.");
+    });
+    return Results.Accepted($"/jobs/{job.JobId}", job);
+});
+app.MapPost("/jobs/verify-restore", (VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+{
+    var restorePointPath = paths.ValidateAbsolutePath(request.RestorePointPath, nameof(request.RestorePointPath));
+    var job = jobs.Enqueue("verify-restore", null, restorePointPath, async ct =>
+    {
+        var result = await engine.VerifyRestoreAsync(restorePointPath, request.KeepTemporaryFiles, ct);
+        if (!result.IsValid)
+        {
+            throw new InvalidOperationException(string.Join("; ", result.Errors));
+        }
+
+        return new ApiJobOutcome(restorePointPath, "Restore verification completed.");
+    });
+    return Results.Accepted($"/jobs/{job.JobId}", job);
+});
+app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+{
+    var validated = request with
+    {
+        RestorePoint = paths.ValidateAbsolutePath(request.RestorePoint, nameof(request.RestorePoint)),
+        Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination))
+    };
+    var job = jobs.Enqueue("restore", validated.NewName, validated.Destination, async ct =>
+    {
+        await engine.RestoreAsync(validated, ct);
+        return new ApiJobOutcome(validated.Destination, $"Restore completed: {validated.NewName}");
+    });
+    return Results.Accepted($"/jobs/{job.JobId}", job);
 });
 app.MapGet("/vms", async (IHyperVService hyperV, CancellationToken ct) => Results.Ok(await hyperV.ListVmsAsync(ct)));
 app.MapGet("/vms/{id}", async (string id, IHyperVService hyperV, CancellationToken ct) =>

@@ -79,6 +79,9 @@ The main configuration section is `HyperVBackupAgent`.
         "StorePath": "",
         "Subject": "CN=HyperVBackupAgent API",
         "ValidDays": 825
+      },
+      "Jobs": {
+        "StorePath": ""
       }
     },
     "HyperVProvider": "Simulation",
@@ -196,6 +199,14 @@ Implemented endpoints:
 
 - `GET /health`
 - `GET /agent/certificate`
+- `GET /jobs`
+- `GET /jobs/{id}`
+- `POST /jobs/{id}/cancel`
+- `POST /jobs/backup-full`
+- `POST /jobs/backup-incremental`
+- `POST /jobs/verify-chain`
+- `POST /jobs/verify-restore`
+- `POST /jobs/restore`
 - `GET /vms`
 - `GET /vms/{id}`
 - `GET /vms/{id}/restore-points`
@@ -206,6 +217,8 @@ Implemented endpoints:
 - `POST /restore`
 - `POST /maintenance/cleanup-temp-checkpoints`
 - `POST /maintenance/apply-retention`
+
+The `/jobs/*` endpoints are the preferred integration path for a central server because backup, restore, and verification can take a long time. Job history is stored locally as JSON. On Windows, the default path is `C:\ProgramData\HyperVBackupAgent\jobs\api-jobs.json`; override it with `HyperVBackupAgent:Api:Jobs:StorePath`.
 
 ## Windows Service Scheduler
 

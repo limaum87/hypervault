@@ -35,6 +35,7 @@ Ja implementado:
 - Validacao central de paths absolutos para endpoints que recebem caminhos.
 - Respostas de erro em JSON para token ausente/invalido, request invalido, conflito, nao encontrado e erro inesperado.
 - Geracao automatica de certificado self-signed local para HTTPS, com endpoint autenticado para expor fingerprint.
+- Endpoints de jobs assincronos para backup, verify e restore, com historico JSON local.
 
 ## P0 - Necessario Antes de Producao
 
@@ -99,6 +100,8 @@ Criterio de aceite:
 
 ### 4. Transformar operacoes longas em jobs
 
+Status: implementado inicialmente.
+
 Backup, verify-restore e restore podem demorar muito. A API nao deve depender de uma requisicao HTTP aberta ate o fim.
 
 Implementar:
@@ -119,6 +122,8 @@ Criterio de aceite:
 - Operacoes existentes podem permanecer como chamadas sincronas para diagnostico, mas o painel deve usar jobs.
 
 ### 5. Persistir historico de jobs
+
+Status: implementado inicialmente com JSON local.
 
 - Registrar jobs localmente em arquivo JSON ou SQLite opcional.
 - Persistir:
