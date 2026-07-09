@@ -8,10 +8,20 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddHyperVBackupAgent(this IServiceCollection services, IConfiguration configuration)
     {
+        var provider = configuration["HyperVBackupAgent:HyperVProvider"] ?? "Simulation";
         var simulationRoot = configuration["HyperVBackupAgent:SimulationRoot"]
             ?? Path.Combine(AppContext.BaseDirectory, "sim-vms");
 
-        services.AddSingleton<IHyperVService>(_ => new SimulatedHyperVService(simulationRoot));
+        if (string.Equals(provider, "PowerShell", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<IPowerShellRunner, PowerShellRunner>();
+            services.AddSingleton<IHyperVService, PowerShellHyperVService>();
+        }
+        else
+        {
+            services.AddSingleton<IHyperVService>(_ => new SimulatedHyperVService(simulationRoot));
+        }
+
         services.AddSingleton<IRctService, SimulatedRctService>();
         services.AddSingleton<IStorageProvider, FileStorageProvider>();
         services.AddSingleton<IMetadataRepository, JsonMetadataRepository>();

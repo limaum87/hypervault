@@ -90,6 +90,24 @@ public sealed class BackupEngineTests
         Assert.Equal("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash);
     }
 
+    [Fact]
+    public void ServiceCollectionCanSelectPowerShellHyperVProvider()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HyperVBackupAgent:HyperVProvider"] = "PowerShell"
+            })
+            .Build();
+
+        using var services = new ServiceCollection()
+            .AddSingleton<IConfiguration>(configuration)
+            .AddHyperVBackupAgent(configuration)
+            .BuildServiceProvider();
+
+        Assert.IsType<PowerShellHyperVService>(services.GetRequiredService<IHyperVService>());
+    }
+
     private static ServiceProvider BuildServices(string simulationRoot)
     {
         var configuration = new ConfigurationBuilder()
