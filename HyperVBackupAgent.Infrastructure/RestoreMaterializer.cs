@@ -81,25 +81,32 @@ public sealed class RestoreMaterializer
         using var reader = new BinaryReader(blockFile, System.Text.Encoding.UTF8, leaveOpen: true);
 
         var rangeCount = reader.ReadInt32();
+        var buffer = new byte[1024 * 1024];
         for (var index = 0; index < rangeCount; index++)
         {
             var offset = reader.ReadInt64();
             var expectedLength = reader.ReadInt64();
-            var actualLength = reader.ReadInt32();
+            var actualLength = reader.ReadInt64();
 
             if (actualLength < 0 || actualLength > expectedLength)
             {
                 throw new InvalidDataException($"Invalid block length in {blockFilePath} at range {index}.");
             }
 
-            var buffer = reader.ReadBytes(actualLength);
-            if (buffer.Length != actualLength)
-            {
-                throw new EndOfStreamException($"Unexpected end of block file {blockFilePath}.");
-            }
-
             disk.Position = offset;
-            await disk.WriteAsync(buffer, cancellationToken);
+            var remaining = actualLength;
+            while (remaining > 0)
+            {
+                var toRead = (int)Math.Min(buffer.Length, remaining);
+                var read = await blockFile.ReadAsync(buffer.AsMemory(0, toRead), cancellationToken);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException($"Unexpected end of block file {blockFilePath}.");
+                }
+
+                await disk.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                remaining -= read;
+            }
         }
     }
 }
