@@ -134,7 +134,7 @@ public class Worker : BackgroundService
         var section = _configuration.GetSection("HyperVBackupAgent:Scheduler");
         return new SchedulerOptions
         {
-            Enabled = section.GetValue("Enabled", false),
+            Enabled = section.GetValue("Enabled", true),
             BackupRoot = section["BackupRoot"] ?? _configuration["HyperVBackupAgent:BackupRoot"] ?? "backups",
             VmNames = section.GetSection("VmNames").Get<string[]>() ?? [],
             PollInterval = ParseTimeSpan(section["PollInterval"], TimeSpan.FromMinutes(1)),

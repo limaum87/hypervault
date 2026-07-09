@@ -15,6 +15,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseWindowsService(options => options.ServiceName = "HyperVBackupAgent.Api");
 ApiEndpointConfiguration.ConfigureApiEndpoints(builder);
 builder.Host.UseSerilog((context, _, loggerConfiguration) =>
 {

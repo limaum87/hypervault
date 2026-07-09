@@ -239,9 +239,34 @@ API logs are structured JSON on stdout and, by default, daily rolling files. On 
 
 Health checks are public. `GET /health/live` reports whether the API process is running. `GET /health/ready` returns `200` only when the API token is configured, the backup root exists and is accessible, and the configured Hyper-V provider can be initialized; otherwise it returns `503` with per-check details.
 
-## Windows Service Scheduler
+## Windows Services
 
-The scheduler is disabled by default. Enable it under:
+Production deployments should install two automatic Windows services:
+
+- `HyperVBackupAgent.Api` keeps the local HTTPS API online for central orchestration, health checks, job creation, restore, and diagnostics.
+- `HyperVBackupAgent.Scheduler` runs the automatic backup schedule and retention policy.
+
+The services are separated so the API can remain available even if scheduled backup execution needs to restart or be diagnosed independently. Both services should be configured with `StartupType=Automatic`.
+
+The repository includes a service installation helper that expects this publish layout:
+
+```text
+artifacts/publish/
+  api/
+    HyperVBackupAgent.Api.exe
+  scheduler/
+    HyperVBackupAgent.Service.exe
+```
+
+Run from an elevated PowerShell session after publishing:
+
+```powershell
+.\scripts\install-windows-services.ps1 -PublishRoot .\artifacts\publish
+```
+
+## Scheduler
+
+The scheduler is enabled by default for automatic backups. Configure its schedule under:
 
 ```json
 {
