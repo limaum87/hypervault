@@ -45,12 +45,41 @@ public sealed class ApiPreflightService
 
         if (request.Type == BackupType.Incremental)
         {
+            var attemptedPreparation = false;
             foreach (var disk in vm.Disks)
             {
                 var available = await _rct.IsAvailableAsync(vm, disk, cancellationToken);
                 if (!available)
                 {
-                    errors.Add($"RCT is not available for disk '{disk.Id}'.");
+                    if (!attemptedPreparation)
+                    {
+                        attemptedPreparation = true;
+                        var preparation = await _hyperV.PrepareForRctAsync(vm.Id, cancellationToken);
+                        details["rctPreparationReady"] = preparation.IsReady.ToString();
+                        details["rctRequiresOfflineUpgrade"] = preparation.RequiresOfflineUpgrade.ToString();
+                        if (!string.IsNullOrWhiteSpace(preparation.VmVersion))
+                        {
+                            details["vmVersion"] = preparation.VmVersion;
+                        }
+
+                        if (preparation.IsReady)
+                        {
+                            warnings.Add(preparation.Message);
+                            available = await _rct.IsAvailableAsync(vm, disk, cancellationToken);
+                        }
+                        else
+                        {
+                            errors.Add(preparation.Message);
+                        }
+                    }
+
+                    if (!available)
+                    {
+                        var message = attemptedPreparation
+                            ? $"RCT is not available for disk '{disk.Id}' even after online Hyper-V reference point preparation. Check Hyper-V RCT support, pending checkpoints, and host event logs."
+                            : $"RCT is not available for disk '{disk.Id}'.";
+                        errors.Add(message);
+                    }
                 }
             }
         }

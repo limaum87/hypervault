@@ -84,11 +84,13 @@ public sealed class PowerShellHyperVService : IHyperVService
             $vm = Get-VM | Where-Object { $_.Id.ToString() -eq '{{Escape(vmId)}}' -or $_.Name -eq '{{Escape(vmId)}}' } | Select-Object -First 1
             if (-not $vm) { throw 'VM not found: {{Escape(vmId)}}' }
             $originalCheckpointType = $vm.CheckpointType
+            $changedCheckpointType = $false
             if ($vm.CheckpointType.ToString() -ne 'Production' -and $vm.CheckpointType.ToString() -ne 'ProductionOnly') {
               Set-VM -Name $vm.Name -CheckpointType Production
+              $changedCheckpointType = $true
             }
             Checkpoint-VM -Name $vm.Name -SnapshotName '{{Escape(name)}}'
-            if ($originalCheckpointType -ne $vm.CheckpointType) {
+            if ($changedCheckpointType) {
               Set-VM -Name $vm.Name -CheckpointType $originalCheckpointType
             }
             $snapshot = Get-VMSnapshot -VMName $vm.Name -Name '{{Escape(name)}}'
@@ -143,6 +145,92 @@ public sealed class PowerShellHyperVService : IHyperVService
             [pscustomobject]@{ Removed = $snapshot -ne $null } | ConvertTo-Json
             """;
         await RunJsonAsync(script, cancellationToken);
+    }
+
+    public async Task<RctPreparationResult> PrepareForRctAsync(string vmId, CancellationToken cancellationToken = default)
+    {
+        var script = $$"""
+            $ErrorActionPreference = 'Stop'
+            $vm = Get-VM | Where-Object { $_.Id.ToString() -eq '{{Escape(vmId)}}' -or $_.Name -eq '{{Escape(vmId)}}' } | Select-Object -First 1
+            if (-not $vm) { throw 'VM not found: {{Escape(vmId)}}' }
+
+            $version = [string]$vm.Version
+            $requiresOfflineUpgrade = $false
+            try {
+              $requiresOfflineUpgrade = ([version]$version -lt [version]'6.2')
+            } catch {
+              $requiresOfflineUpgrade = $true
+            }
+
+            if ($requiresOfflineUpgrade) {
+              [pscustomobject]@{
+                IsReady = $false
+                RequiresOfflineUpgrade = $true
+                Message = "VM configuration version $version does not support Hyper-V RCT. Shut down the VM and run Update-VMVersion before using incremental backups."
+                VmVersion = $version
+                CheckpointId = $null
+              } | ConvertTo-Json
+              return
+            }
+
+            function Wait-ReferencePointJob {
+              param($Result)
+              if ($Result.ReturnValue -eq 0) { return }
+              if ($Result.ReturnValue -ne 4096) {
+                throw "Reference point operation failed with return value $($Result.ReturnValue)."
+              }
+
+              $jobId = $Result.Job.InstanceID
+              $job = Get-CimInstance -Namespace root/virtualization/v2 -ClassName Msvm_ConcreteJob -Filter "InstanceID='$jobId'"
+              while ($job.JobState -eq 3 -or $job.JobState -eq 4) {
+                Start-Sleep -Milliseconds 500
+                $job = Get-CimInstance -Namespace root/virtualization/v2 -ClassName Msvm_ConcreteJob -Filter "InstanceID='$jobId'"
+              }
+
+              if ($job.JobState -ne 7) {
+                throw "Reference point job failed. State=$($job.JobState) Error=$($job.ErrorDescription)"
+              }
+            }
+
+            $computerSystem = Get-CimInstance -Namespace root/virtualization/v2 -ClassName Msvm_ComputerSystem |
+              Where-Object { $_.Name -eq $vm.Id.ToString() -or $_.ElementName -eq $vm.Name } |
+              Select-Object -First 1
+            if (-not $computerSystem) { throw 'VM WMI computer system not found: {{Escape(vmId)}}' }
+
+            $service = Get-CimInstance -Namespace root/virtualization/v2 -ClassName Msvm_VirtualSystemReferencePointService
+            $referencePoint = $null
+            try {
+              $result = Invoke-CimMethod -InputObject $service -MethodName CreateReferencePoint -Arguments @{
+                AffectedSystem = $computerSystem
+                ReferencePointSettings = $null
+                ReferencePointType = [UInt16]1
+              }
+              Wait-ReferencePointJob $result
+
+              $referencePoint = Get-CimAssociatedInstance -InputObject $computerSystem -ResultClassName Msvm_VirtualSystemReferencePoint |
+                Sort-Object InstanceID |
+                Select-Object -Last 1
+            } finally {
+              if ($referencePoint) {
+                $destroy = Invoke-CimMethod -InputObject $service -MethodName DestroyReferencePoint -Arguments @{
+                  AffectedReferencePoint = $referencePoint
+                }
+                Wait-ReferencePointJob $destroy
+              }
+            }
+
+            [pscustomobject]@{
+              IsReady = $true
+              RequiresOfflineUpgrade = $false
+              Message = 'Hyper-V RCT preparation completed using an RCT reference point.'
+              VmVersion = $version
+              CheckpointId = if ($referencePoint) { $referencePoint.InstanceID } else { $null }
+            } | ConvertTo-Json
+            """;
+
+        var json = await RunJsonAsync(script, cancellationToken);
+        return DeserializeSingle<RctPreparationResult>(json)
+            ?? throw new InvalidOperationException("Hyper-V RCT preparation did not return a result.");
     }
 
     public async Task<IReadOnlyList<CheckpointCleanupResult>> CleanupTemporaryCheckpointsAsync(string namePrefix = "HyperVBackupAgent-", CancellationToken cancellationToken = default)
@@ -275,6 +363,16 @@ public sealed class PowerShellHyperVService : IHyperVService
 
         var single = JsonSerializer.Deserialize<CheckpointCleanupResult>(json, options);
         return single is null ? [] : [single];
+    }
+
+    private static T? DeserializeSingle<T>(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return default;
+        }
+
+        return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
     }
 
     private static string Escape(string value) => value.Replace("'", "''", StringComparison.Ordinal);

@@ -36,6 +36,7 @@ public sealed class BackupEngine : IBackupEngine
         string? checkpointId = null;
         try
         {
+            await EnsureRctReadyAsync(vm, cancellationToken);
             checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-{backupId}", cancellationToken);
             var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
             var rctReferenceIds = new Dictionary<string, string>();
@@ -116,6 +117,7 @@ public sealed class BackupEngine : IBackupEngine
         string? checkpointId = null;
         try
         {
+            await EnsureRctReadyAsync(vm, cancellationToken);
             checkpointId = await _hyperV.CreateProductionCheckpointAsync(vm.Id, $"HyperVBackupAgent-{backupId}", cancellationToken);
             var consistentDisks = await _hyperV.GetCheckpointConsistentDisksAsync(vm.Id, checkpointId, cancellationToken);
             var backup = new BackupMetadata
@@ -166,6 +168,29 @@ public sealed class BackupEngine : IBackupEngine
     private async Task<VirtualMachineInfo> ResolveVmAsync(string nameOrId, CancellationToken cancellationToken)
         => await _hyperV.GetVmAsync(nameOrId, cancellationToken)
             ?? throw new InvalidOperationException($"VM '{nameOrId}' was not found.");
+
+    private async Task EnsureRctReadyAsync(VirtualMachineInfo vm, CancellationToken cancellationToken)
+    {
+        foreach (var disk in vm.Disks)
+        {
+            if (await _rct.IsAvailableAsync(vm, disk, cancellationToken))
+            {
+                continue;
+            }
+
+            var preparation = await _hyperV.PrepareForRctAsync(vm.Id, cancellationToken);
+            if (!preparation.IsReady)
+            {
+                throw new InvalidOperationException(preparation.Message);
+            }
+
+            if (!await _rct.IsAvailableAsync(vm, disk, cancellationToken))
+            {
+                throw new InvalidOperationException(
+                    $"RCT is not available for disk '{disk.Id}' even after online Hyper-V reference point preparation. Check Hyper-V RCT support, pending checkpoints, and host event logs.");
+            }
+        }
+    }
 
     private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)
     {

@@ -345,7 +345,11 @@ Incremental `.blocks` files contain changed block ranges and raw block data. Res
 - `SimulatedRctService`: deterministic simulation for local tests.
 - `NativeHyperVRctService`: native/Hyper-V path using `virtdisk.dll` and `Msvm_ImageManagementService.GetVirtualDiskChanges`.
 
-Native RCT should be validated on a real Hyper-V host. Expected failure modes include missing administrator permissions, unsupported VM/disk configuration, RCT disabled, or expired change tracking IDs.
+For production Hyper-V hosts, the agent attempts to prepare RCT automatically before backups when a disk does not yet expose a change-tracking id. The PowerShell Hyper-V provider checks the VM configuration version and, for compatible VMs, creates and removes a temporary production checkpoint so Hyper-V can initialize its reference-point/RCT state through the supported platform workflow.
+
+If a VM configuration version is too old for Hyper-V RCT, backup preflight returns an explicit error indicating that the VM must be shut down and upgraded with `Update-VMVersion`. That offline step is expected only for older VMs; compatible VMs should not require manual XML edits or a stop/start just to initialize RCT.
+
+Expected failure modes include missing administrator permissions, unsupported VM/disk configuration, expired change tracking IDs, or guest production-checkpoint/VSS failures.
 
 ## Verification
 
@@ -382,7 +386,7 @@ Current test coverage is focused on simulation-mode behavior and composition. Re
 
 ## Known Limitations
 
-- Native RCT has not yet been validated against a real Hyper-V host in this repository session.
+- Native RCT requires Windows Server 2016+ Hyper-V and VM configuration versions that support reference-point based change tracking.
 - SQLite is referenced but not yet used as the primary metadata index.
 - VM restore currently creates a basic VM configuration; it does not fully recreate CPU, memory, firmware, network, or advanced VM settings.
 - No compression, encryption, deduplication, cloud storage, or granular file restore.

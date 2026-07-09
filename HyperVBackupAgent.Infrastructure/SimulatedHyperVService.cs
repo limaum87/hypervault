@@ -45,6 +45,9 @@ public sealed class SimulatedHyperVService : IHyperVService
     public Task RemoveCheckpointAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
+    public Task<RctPreparationResult> PrepareForRctAsync(string vmId, CancellationToken cancellationToken = default)
+        => Task.FromResult(new RctPreparationResult(true, false, "Simulated VM is ready for RCT.", "8.0"));
+
     public Task<IReadOnlyList<CheckpointCleanupResult>> CleanupTemporaryCheckpointsAsync(string namePrefix = "HyperVBackupAgent-", CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<CheckpointCleanupResult>>([]);
 

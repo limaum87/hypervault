@@ -97,6 +97,9 @@ public sealed class ApiHealthServiceTests
         public Task RemoveCheckpointAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
+        public Task<RctPreparationResult> PrepareForRctAsync(string vmId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new RctPreparationResult(true, false, "ready"));
+
         public Task<IReadOnlyList<CheckpointCleanupResult>> CleanupTemporaryCheckpointsAsync(string namePrefix = "HyperVBackupAgent-", CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<CheckpointCleanupResult>>([]);
 

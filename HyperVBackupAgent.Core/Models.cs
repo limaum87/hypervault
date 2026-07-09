@@ -50,6 +50,13 @@ public sealed record RctDiskState(
     string EndChangeId,
     IReadOnlyList<ChangedRange> ChangedRanges);
 
+public sealed record RctPreparationResult(
+    bool IsReady,
+    bool RequiresOfflineUpgrade,
+    string Message,
+    string? VmVersion = null,
+    string? CheckpointId = null);
+
 public sealed record BackupRequest(string VmNameOrId, string Destination);
 
 public sealed record RestoreRequest(
