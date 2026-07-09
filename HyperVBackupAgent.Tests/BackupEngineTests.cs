@@ -162,6 +162,24 @@ public sealed class BackupEngineTests
     }
 
     [Fact]
+    public void ServiceCollectionCanSelectNativeRctProvider()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HyperVBackupAgent:RctProvider"] = "Native"
+            })
+            .Build();
+
+        using var services = new ServiceCollection()
+            .AddSingleton<IConfiguration>(configuration)
+            .AddHyperVBackupAgent(configuration)
+            .BuildServiceProvider();
+
+        Assert.IsType<NativeHyperVRctService>(services.GetRequiredService<IRctService>());
+    }
+
+    [Fact]
     public async Task SimulatedCheckpointCleanupReturnsEmptyResult()
     {
         var root = CreateTempDirectory();
