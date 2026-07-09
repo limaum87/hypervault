@@ -114,6 +114,45 @@ public sealed class PowerShellHyperVService : IHyperVService
         await RunJsonAsync(script, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<CheckpointCleanupResult>> CleanupTemporaryCheckpointsAsync(string namePrefix = "HyperVBackupAgent-", CancellationToken cancellationToken = default)
+    {
+        var script = $$"""
+            $ErrorActionPreference = 'Stop'
+            $results = @()
+            Get-VM | ForEach-Object {
+              $vm = $_
+              Get-VMSnapshot -VMName $vm.Name -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like '{{Escape(namePrefix)}}*' } |
+                ForEach-Object {
+                  $snapshot = $_
+                  try {
+                    Remove-VMSnapshot -VMName $vm.Name -Name $snapshot.Name -ErrorAction Stop
+                    $results += [pscustomobject]@{
+                      VmId = $vm.Id.ToString()
+                      VmName = $vm.Name
+                      CheckpointId = $snapshot.Id.ToString()
+                      CheckpointName = $snapshot.Name
+                      Removed = $true
+                      Error = $null
+                    }
+                  } catch {
+                    $results += [pscustomobject]@{
+                      VmId = $vm.Id.ToString()
+                      VmName = $vm.Name
+                      CheckpointId = $snapshot.Id.ToString()
+                      CheckpointName = $snapshot.Name
+                      Removed = $false
+                      Error = $_.Exception.Message
+                    }
+                  }
+                }
+            }
+            $results | ConvertTo-Json -Depth 5
+            """;
+        var json = await RunJsonAsync(script, cancellationToken);
+        return DeserializeCleanupResults(json);
+    }
+
     public async Task CreateVmFromDisksAsync(string vmName, IReadOnlyList<string> diskPaths, bool overwriteExisting, CancellationToken cancellationToken = default)
     {
         if (diskPaths.Count == 0)
@@ -170,6 +209,23 @@ public sealed class PowerShellHyperVService : IHyperVService
         }
 
         var single = JsonSerializer.Deserialize<VirtualMachineInfo>(json, options);
+        return single is null ? [] : [single];
+    }
+
+    private static IReadOnlyList<CheckpointCleanupResult> DeserializeCleanupResults(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        if (json.TrimStart().StartsWith('['))
+        {
+            return JsonSerializer.Deserialize<List<CheckpointCleanupResult>>(json, options) ?? [];
+        }
+
+        var single = JsonSerializer.Deserialize<CheckpointCleanupResult>(json, options);
         return single is null ? [] : [single];
     }
 

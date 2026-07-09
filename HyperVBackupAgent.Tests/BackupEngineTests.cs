@@ -136,6 +136,17 @@ public sealed class BackupEngineTests
         Assert.IsType<PowerShellHyperVService>(services.GetRequiredService<IHyperVService>());
     }
 
+    [Fact]
+    public async Task SimulatedCheckpointCleanupReturnsEmptyResult()
+    {
+        var root = CreateTempDirectory();
+        using var services = BuildServices(Path.Combine(root, "vms"));
+
+        var results = await services.GetRequiredService<IHyperVService>().CleanupTemporaryCheckpointsAsync();
+
+        Assert.Empty(results);
+    }
+
     private static ServiceProvider BuildServices(string simulationRoot)
     {
         var configuration = new ConfigurationBuilder()

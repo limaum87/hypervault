@@ -30,7 +30,7 @@ try
         "verify-chain" => await VerifyChainAsync(Required(args, "--chain-id")),
         "verify-restore" => await VerifyRestoreAsync(Required(args, "--restore-point")),
         "restore" => await RestoreAsync(Required(args, "--restore-point"), Required(args, "--destination"), Required(args, "--new-name"), HasFlag(args, "--overwrite"), Optional(args, "--backup-id")),
-        "cleanup-temp-checkpoints" => NotImplemented("cleanup-temp-checkpoints"),
+        "cleanup-temp-checkpoints" => await CleanupTemporaryCheckpointsAsync(Optional(args, "--prefix") ?? "HyperVBackupAgent-"),
         "list-restore-points" => await ListRestorePointsAsync(Required(args, "--chain-id")),
         _ => Unknown(args[0])
     };
@@ -128,6 +128,19 @@ async Task<int> ListRestorePointsAsync(string chainPath)
     return 0;
 }
 
+async Task<int> CleanupTemporaryCheckpointsAsync(string prefix)
+{
+    var results = await services.GetRequiredService<IHyperVService>().CleanupTemporaryCheckpointsAsync(prefix);
+    foreach (var result in results)
+    {
+        var status = result.Removed ? "removed" : "failed";
+        Console.WriteLine($"{status}\t{result.VmName}\t{result.CheckpointName}\t{result.Error}");
+    }
+
+    Console.WriteLine($"cleanup-temp-checkpoints completed: removed={results.Count(result => result.Removed)} failed={results.Count(result => !result.Removed)}");
+    return results.All(result => result.Removed) ? 0 : 1;
+}
+
 static string Required(string[] args, string name)
 {
     var index = Array.IndexOf(args, name);
@@ -152,12 +165,6 @@ static int Unknown(string command)
     Console.Error.WriteLine($"Unknown command: {command}");
     PrintHelp();
     return 1;
-}
-
-static int NotImplemented(string command)
-{
-    Console.Error.WriteLine($"Command '{command}' is declared but not implemented yet.");
-    return 2;
 }
 
 static void PrintVerify(VerifyResult result)
@@ -185,6 +192,7 @@ static void PrintHelp()
       verify-chain --chain-id "C:\backup\host\vm\chain-..."
       verify-restore --restore-point "C:\backup\host\vm\chain-..."
       restore --restore-point "C:\backup\host\vm\chain-..." --destination "C:\restore" --new-name "ERP01-Restore-Test" [--backup-id "inc-0001"] [--overwrite]
+      cleanup-temp-checkpoints [--prefix "HyperVBackupAgent-"]
       list-restore-points --chain-id "C:\backup\host\vm\chain-..."
     """);
 }

@@ -57,9 +57,11 @@ app.MapPost("/restore", async (RestoreRequest request, IRestoreEngine engine, Ca
     await engine.RestoreAsync(request, ct);
     return Results.Accepted();
 });
-app.MapPost("/maintenance/cleanup-temp-checkpoints", () => Results.Problem("Checkpoint cleanup is not implemented in the simulation scaffold.", statusCode: 501));
+app.MapPost("/maintenance/cleanup-temp-checkpoints", async (CleanupCheckpointsRequest request, IHyperVService hyperV, CancellationToken ct) =>
+    Results.Ok(await hyperV.CleanupTemporaryCheckpointsAsync(request.NamePrefix, ct)));
 
 app.Run();
 
 public sealed record VerifyChainRequest(string ChainPath);
 public sealed record VerifyRestoreRequest(string RestorePointPath, bool KeepTemporaryFiles = false);
+public sealed record CleanupCheckpointsRequest(string NamePrefix = "HyperVBackupAgent-");

@@ -7,6 +7,7 @@ public interface IHyperVService
     Task<bool> SupportsProductionCheckpointAsync(string vmId, CancellationToken cancellationToken = default);
     Task<string> CreateProductionCheckpointAsync(string vmId, string name, CancellationToken cancellationToken = default);
     Task RemoveCheckpointAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<CheckpointCleanupResult>> CleanupTemporaryCheckpointsAsync(string namePrefix = "HyperVBackupAgent-", CancellationToken cancellationToken = default);
     Task CreateVmFromDisksAsync(string vmName, IReadOnlyList<string> diskPaths, bool overwriteExisting, CancellationToken cancellationToken = default);
 }
 

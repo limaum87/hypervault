@@ -34,6 +34,14 @@ public sealed record CheckpointInfo(
     DateTimeOffset CreatedAt,
     bool IsProduction);
 
+public sealed record CheckpointCleanupResult(
+    string VmId,
+    string VmName,
+    string CheckpointId,
+    string CheckpointName,
+    bool Removed,
+    string? Error = null);
+
 public sealed record ChangedRange(long Offset, long Length);
 
 public sealed record RctDiskState(

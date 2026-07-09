@@ -38,6 +38,9 @@ public sealed class SimulatedHyperVService : IHyperVService
     public Task RemoveCheckpointAsync(string vmId, string checkpointId, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
+    public Task<IReadOnlyList<CheckpointCleanupResult>> CleanupTemporaryCheckpointsAsync(string namePrefix = "HyperVBackupAgent-", CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<CheckpointCleanupResult>>([]);
+
     public Task CreateVmFromDisksAsync(string vmName, IReadOnlyList<string> diskPaths, bool overwriteExisting, CancellationToken cancellationToken = default)
     {
         if (!overwriteExisting && Directory.Exists(Path.Combine(_root, vmName)))
