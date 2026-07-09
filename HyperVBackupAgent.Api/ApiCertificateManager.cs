@@ -72,7 +72,9 @@ public static class ApiCertificateManager
         => new(
             Path.GetFullPath(path),
             password,
-            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+            X509KeyStorageFlags.MachineKeySet |
+            X509KeyStorageFlags.PersistKeySet |
+            X509KeyStorageFlags.Exportable);
 
     private static X509Certificate2 CreateSelfSignedCertificate(IConfiguration section)
     {
