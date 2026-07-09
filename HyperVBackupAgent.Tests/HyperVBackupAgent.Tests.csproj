@@ -24,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\HyperVBackupAgent.Api\HyperVBackupAgent.Api.csproj" />
     <ProjectReference Include="..\HyperVBackupAgent.Core\HyperVBackupAgent.Core.csproj" />
     <ProjectReference Include="..\HyperVBackupAgent.Infrastructure\HyperVBackupAgent.Infrastructure.csproj" />
   </ItemGroup>
