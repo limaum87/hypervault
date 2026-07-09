@@ -82,6 +82,12 @@ The main configuration section is `HyperVBackupAgent`.
       },
       "Jobs": {
         "StorePath": ""
+      },
+      "Logging": {
+        "FileEnabled": true,
+        "Directory": "",
+        "RetainedFileCountLimit": 14,
+        "FileSizeLimitBytes": 104857600
       }
     },
     "HyperVProvider": "Simulation",
@@ -227,6 +233,8 @@ The `/jobs/*` endpoints are the preferred integration path for a central server 
 
 Use pre-flight endpoints before creating long-running jobs. Backup pre-flight validates VM existence, Production Checkpoint support, destination accessibility, free space, and RCT availability for incrementals. Restore pre-flight validates the chain metadata, destination, free space, and VM name conflicts.
 
+API logs are structured JSON on stdout and, by default, daily rolling files. On Windows, file logs are written to `C:\ProgramData\HyperVBackupAgent\logs\hypervbackupagent-api-*.log`; override the directory with `HyperVBackupAgent:Api:Logging:Directory`, retention with `RetainedFileCountLimit`, and per-file size with `FileSizeLimitBytes`. Each HTTP response includes `X-Correlation-Id`; clients may also supply that header. Request logs and job logs include `CorrelationId`, and asynchronous job execution logs include `JobId`.
+
 ## Windows Service Scheduler
 
 The scheduler is disabled by default. Enable it under:
@@ -324,4 +332,3 @@ Current test coverage is focused on simulation-mode behavior and composition. Re
 - VM restore currently creates a basic VM configuration; it does not fully recreate CPU, memory, firmware, network, or advanced VM settings.
 - No compression, encryption, deduplication, cloud storage, or granular file restore.
 - No Hyper-V cluster support.
-- Logs are structured but still need production file sink configuration for long-running service use.

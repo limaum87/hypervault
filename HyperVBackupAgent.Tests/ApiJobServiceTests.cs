@@ -16,15 +16,17 @@ public sealed class ApiJobServiceTests
         var storePath = Path.Combine(root, "api-jobs.json");
         var service = CreateService(root, storePath);
 
-        var job = service.Enqueue("test", "ERP01", root, _ => Task.FromResult(new ApiJobOutcome(root, "done")));
+        var job = service.Enqueue("test", "ERP01", root, _ => Task.FromResult(new ApiJobOutcome(root, "done")), "corr-123");
 
         var completed = await WaitForJobAsync(service, job.JobId);
         var reloaded = CreateService(root, storePath).GetJob(job.JobId);
 
         Assert.Equal(ApiJobStatus.Completed, completed.Status);
         Assert.Equal(root, completed.ResultPath);
+        Assert.Equal("corr-123", completed.CorrelationId);
         Assert.NotNull(reloaded);
         Assert.Equal(ApiJobStatus.Completed, reloaded.Status);
+        Assert.Equal("corr-123", reloaded.CorrelationId);
     }
 
     private static async Task<ApiJobRecord> WaitForJobAsync(ApiJobService service, string jobId)

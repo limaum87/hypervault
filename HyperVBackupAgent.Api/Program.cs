@@ -2,15 +2,23 @@ using HyperVBackupAgent.Core;
 using HyperVBackupAgent.Api;
 using HyperVBackupAgent.Infrastructure;
 using Serilog;
+using Serilog.Context;
 using Serilog.Formatting.Compact;
+using Serilog.Events;
+
+const string CorrelationIdHeader = "X-Correlation-Id";
 
 Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
     .WriteTo.Console(new RenderedCompactJsonFormatter())
     .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 ApiEndpointConfiguration.ConfigureApiEndpoints(builder);
-builder.Host.UseSerilog();
+builder.Host.UseSerilog((context, _, loggerConfiguration) =>
+{
+    ConfigureSerilog(loggerConfiguration, context.Configuration, context.HostingEnvironment.ContentRootPath);
+});
 builder.Services.AddHyperVBackupAgent(builder.Configuration);
 builder.Services.AddSingleton<ApiPathValidator>();
 builder.Services.AddSingleton<ApiJobService>();
@@ -19,6 +27,26 @@ builder.Services.AddSingleton<ApiPreflightService>();
 
 var app = builder.Build();
 
+app.Use(async (context, next) =>
+{
+    var correlationId = GetOrCreateCorrelationId(context);
+    context.TraceIdentifier = correlationId;
+    context.Response.Headers[CorrelationIdHeader] = correlationId;
+
+    using (LogContext.PushProperty("CorrelationId", correlationId))
+    {
+        await next();
+    }
+});
+app.UseSerilogRequestLogging(options =>
+{
+    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+    {
+        diagnosticContext.Set("CorrelationId", httpContext.TraceIdentifier);
+        diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
+        diagnosticContext.Set("RequestScheme", httpContext.Request.Scheme);
+    };
+});
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
 {
@@ -89,7 +117,7 @@ app.MapGet("/jobs/{id}", (string id, ApiJobService jobs) =>
 });
 app.MapPost("/jobs/{id}/cancel", (string id, ApiJobService jobs) =>
     jobs.Cancel(id) ? Results.Accepted($"/jobs/{id}") : Results.NotFound());
-app.MapPost("/jobs/backup-full", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+app.MapPost("/jobs/backup-full", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     var job = jobs.Enqueue("backup-full", validated.VmNameOrId, validated.Destination, async ct =>
@@ -101,10 +129,10 @@ app.MapPost("/jobs/backup-full", (BackupRequest request, IBackupEngine engine, A
         }
 
         return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}");
-    });
+    }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/backup-incremental", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+app.MapPost("/jobs/backup-incremental", (BackupRequest request, IBackupEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     var job = jobs.Enqueue("backup-incremental", validated.VmNameOrId, validated.Destination, async ct =>
@@ -116,10 +144,10 @@ app.MapPost("/jobs/backup-incremental", (BackupRequest request, IBackupEngine en
         }
 
         return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}");
-    });
+    }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/verify-chain", (VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+app.MapPost("/jobs/verify-chain", (VerifyChainRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var chainPath = paths.ValidateAbsolutePath(request.ChainPath, nameof(request.ChainPath));
     var job = jobs.Enqueue("verify-chain", null, chainPath, async ct =>
@@ -131,10 +159,10 @@ app.MapPost("/jobs/verify-chain", (VerifyChainRequest request, IVerifyEngine eng
         }
 
         return new ApiJobOutcome(chainPath, "Chain verification completed.");
-    });
+    }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/verify-restore", (VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+app.MapPost("/jobs/verify-restore", (VerifyRestoreRequest request, IVerifyEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var restorePointPath = paths.ValidateAbsolutePath(request.RestorePointPath, nameof(request.RestorePointPath));
     var job = jobs.Enqueue("verify-restore", null, restorePointPath, async ct =>
@@ -146,10 +174,10 @@ app.MapPost("/jobs/verify-restore", (VerifyRestoreRequest request, IVerifyEngine
         }
 
         return new ApiJobOutcome(restorePointPath, "Restore verification completed.");
-    });
+    }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
-app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, ApiJobService jobs) =>
+app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, ApiPathValidator paths, ApiJobService jobs, HttpContext context) =>
 {
     var validated = request with
     {
@@ -160,7 +188,7 @@ app.MapPost("/jobs/restore", (RestoreRequest request, IRestoreEngine engine, Api
     {
         await engine.RestoreAsync(validated, ct);
         return new ApiJobOutcome(validated.Destination, $"Restore completed: {validated.NewName}");
-    });
+    }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
 app.MapPost("/backups/preflight", async (BackupPreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
@@ -240,6 +268,62 @@ static async Task WriteErrorAsync(HttpContext context, int statusCode, string co
     context.Response.StatusCode = statusCode;
     context.Response.ContentType = "application/json";
     await context.Response.WriteAsJsonAsync(new ApiError(code, message, context.TraceIdentifier));
+}
+
+static string GetOrCreateCorrelationId(HttpContext context)
+{
+    var supplied = context.Request.Headers[CorrelationIdHeader].FirstOrDefault();
+    return string.IsNullOrWhiteSpace(supplied)
+        ? context.TraceIdentifier
+        : supplied.Trim();
+}
+
+static void ConfigureSerilog(LoggerConfiguration loggerConfiguration, IConfiguration configuration, string contentRootPath)
+{
+    var loggingSection = configuration.GetSection("HyperVBackupAgent:Api:Logging");
+    var fileEnabled = loggingSection.GetValue("FileEnabled", true);
+    var retainedFileCountLimit = loggingSection.GetValue<int?>("RetainedFileCountLimit") ?? 14;
+    var fileSizeLimitBytes = loggingSection.GetValue<long?>("FileSizeLimitBytes") ?? 104_857_600;
+
+    loggerConfiguration
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .WriteTo.Console(new RenderedCompactJsonFormatter());
+
+    if (!fileEnabled)
+    {
+        return;
+    }
+
+    var logDirectory = ResolveLogDirectory(loggingSection["Directory"], contentRootPath);
+    Directory.CreateDirectory(logDirectory);
+    loggerConfiguration.WriteTo.File(
+        new RenderedCompactJsonFormatter(),
+        Path.Combine(logDirectory, "hypervbackupagent-api-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: retainedFileCountLimit,
+        fileSizeLimitBytes: fileSizeLimitBytes,
+        rollOnFileSizeLimit: true,
+        shared: true);
+}
+
+static string ResolveLogDirectory(string? configuredDirectory, string contentRootPath)
+{
+    if (!string.IsNullOrWhiteSpace(configuredDirectory))
+    {
+        return Path.GetFullPath(configuredDirectory);
+    }
+
+    if (OperatingSystem.IsWindows())
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "HyperVBackupAgent",
+            "logs");
+    }
+
+    return Path.Combine(contentRootPath, "logs");
 }
 
 public sealed record ApiError(string Code, string Message, string TraceId);

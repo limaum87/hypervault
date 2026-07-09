@@ -30,7 +30,7 @@ Ja implementado:
 - `POST /maintenance/cleanup-temp-checkpoints`
 - `POST /maintenance/apply-retention`
 - Autenticacao Bearer Token para todos os endpoints exceto `/health`.
-- Logs JSON via Serilog no console.
+- Logs JSON via Serilog no console e em arquivo com rotacao diaria.
 - Reuso correto dos servicos `Core` e `Infrastructure`, sem chamar o executavel CLI.
 - Validacao central de paths absolutos para endpoints que recebem caminhos.
 - Respostas de erro em JSON para token ausente/invalido, request invalido, conflito, nao encontrado e erro inesperado.
@@ -226,6 +226,8 @@ Criterio de aceite:
 
 ### 10. Logs de producao
 
+Status: implementado inicialmente.
+
 - Configurar sink de arquivo com rotacao.
 - Definir pasta padrao de logs.
 - Incluir correlation id por request/job.
@@ -234,6 +236,13 @@ Criterio de aceite:
 Criterio de aceite:
 
 - Cada job pode ser rastreado nos logs pelo `jobId`.
+
+Observacao:
+
+- A secao `HyperVBackupAgent:Api:Logging` controla `FileEnabled`, `Directory`, `RetainedFileCountLimit` e `FileSizeLimitBytes`.
+- No Windows, a pasta padrao e `C:\ProgramData\HyperVBackupAgent\logs`.
+- Cada resposta HTTP inclui `X-Correlation-Id`; o cliente tambem pode enviar esse header.
+- Logs de request e de jobs carregam `CorrelationId`; logs de jobs tambem carregam `JobId`.
 
 ### 11. Health checks mais completos
 

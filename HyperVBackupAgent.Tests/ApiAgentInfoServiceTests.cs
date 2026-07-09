@@ -32,6 +32,10 @@ public sealed class ApiAgentInfoServiceTests
         Assert.DoesNotContain("pfx-password", json, StringComparison.OrdinalIgnoreCase);
         Assert.True(configuration.Certificate.HasConfiguredPath);
         Assert.True(configuration.Certificate.HasConfiguredStorePath);
+        Assert.True(configuration.Logging.FileEnabled);
+        Assert.True(configuration.Logging.HasConfiguredDirectory);
+        Assert.Equal(21, configuration.Logging.RetainedFileCountLimit);
+        Assert.Equal(123456789, configuration.Logging.FileSizeLimitBytes);
         Assert.Equal(5443, configuration.Api.HttpsPort);
         Assert.Equal(7, configuration.Scheduler.KeepLastChains);
     }
@@ -56,6 +60,10 @@ public sealed class ApiAgentInfoServiceTests
                 ["HyperVBackupAgent:Api:Certificate:Subject"] = "CN=HyperVBackupAgent API",
                 ["HyperVBackupAgent:Api:Certificate:ValidDays"] = "825",
                 ["HyperVBackupAgent:Api:Jobs:StorePath"] = "C:\\ProgramData\\HyperVBackupAgent\\jobs\\api-jobs.json",
+                ["HyperVBackupAgent:Api:Logging:FileEnabled"] = "true",
+                ["HyperVBackupAgent:Api:Logging:Directory"] = "C:\\ProgramData\\HyperVBackupAgent\\logs",
+                ["HyperVBackupAgent:Api:Logging:RetainedFileCountLimit"] = "21",
+                ["HyperVBackupAgent:Api:Logging:FileSizeLimitBytes"] = "123456789",
                 ["HyperVBackupAgent:Scheduler:Enabled"] = "true",
                 ["HyperVBackupAgent:Scheduler:VmNames:0"] = "ERP01",
                 ["HyperVBackupAgent:Scheduler:KeepLastChains"] = "7",

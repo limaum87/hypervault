@@ -29,6 +29,7 @@ public sealed class ApiAgentInfoService
         var apiSection = _configuration.GetSection("HyperVBackupAgent:Api");
         var certificateSection = apiSection.GetSection("Certificate");
         var jobsSection = apiSection.GetSection("Jobs");
+        var loggingSection = apiSection.GetSection("Logging");
         var schedulerSection = _configuration.GetSection("HyperVBackupAgent:Scheduler");
 
         return new EffectiveConfiguration(
@@ -48,6 +49,11 @@ public sealed class ApiAgentInfoService
                 certificateSection["Subject"] ?? "CN=HyperVBackupAgent API",
                 certificateSection.GetValue("ValidDays", 825)),
             new ApiJobsOptions(!string.IsNullOrWhiteSpace(jobsSection["StorePath"])),
+            new ApiLoggingOptions(
+                loggingSection.GetValue("FileEnabled", true),
+                !string.IsNullOrWhiteSpace(loggingSection["Directory"]),
+                loggingSection.GetValue<int?>("RetainedFileCountLimit") ?? 14,
+                loggingSection.GetValue<long?>("FileSizeLimitBytes") ?? 104_857_600),
             new SchedulerEffectiveOptions(
                 schedulerSection.GetValue("Enabled", false),
                 schedulerSection["BackupRoot"] ?? _configuration["HyperVBackupAgent:BackupRoot"] ?? "backups",
@@ -90,6 +96,7 @@ public sealed record EffectiveConfiguration(
     ApiEndpointOptions Api,
     ApiCertificateOptions Certificate,
     ApiJobsOptions Jobs,
+    ApiLoggingOptions Logging,
     SchedulerEffectiveOptions Scheduler);
 
 public sealed record ApiEndpointOptions(
@@ -105,6 +112,12 @@ public sealed record ApiCertificateOptions(
     int ValidDays);
 
 public sealed record ApiJobsOptions(bool HasConfiguredStorePath);
+
+public sealed record ApiLoggingOptions(
+    bool FileEnabled,
+    bool HasConfiguredDirectory,
+    int RetainedFileCountLimit,
+    long FileSizeLimitBytes);
 
 public sealed record SchedulerEffectiveOptions(
     bool Enabled,

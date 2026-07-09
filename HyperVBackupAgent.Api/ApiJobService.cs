@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Serilog.Context;
 
 namespace HyperVBackupAgent.Api;
 
@@ -31,7 +32,12 @@ public sealed class ApiJobService
     public ApiJobRecord? GetJob(string jobId)
         => _jobs.TryGetValue(jobId, out var job) ? job : null;
 
-    public ApiJobRecord Enqueue(string type, string? vmNameOrId, string? targetPath, Func<CancellationToken, Task<ApiJobOutcome>> operation)
+    public ApiJobRecord Enqueue(
+        string type,
+        string? vmNameOrId,
+        string? targetPath,
+        Func<CancellationToken, Task<ApiJobOutcome>> operation,
+        string? correlationId = null)
     {
         var job = new ApiJobRecord(
             Guid.NewGuid().ToString("N"),
@@ -43,10 +49,16 @@ public sealed class ApiJobService
             vmNameOrId,
             targetPath,
             null,
-            null);
+            null,
+            correlationId);
 
         _jobs[job.JobId] = job;
         SaveJobs();
+        _logger.LogInformation(
+            "API job {JobId} queued: {JobType} for {VmNameOrId}",
+            job.JobId,
+            job.Type,
+            job.VmNameOrId);
 
         var cancellation = new CancellationTokenSource();
         _cancellations[job.JobId] = cancellation;
@@ -61,47 +73,57 @@ public sealed class ApiJobService
             return false;
         }
 
+        _logger.LogInformation("Cancel requested for API job {JobId}", jobId);
         cancellation.Cancel();
         return true;
     }
 
     private async Task RunJobAsync(string jobId, Func<CancellationToken, Task<ApiJobOutcome>> operation, CancellationTokenSource cancellation)
     {
-        Update(jobId, job => job with { Status = ApiJobStatus.Running, StartedAt = DateTimeOffset.UtcNow });
-        try
+        var current = GetJob(jobId);
+        using (LogContext.PushProperty("JobId", jobId))
+        using (LogContext.PushProperty("JobType", current?.Type))
+        using (LogContext.PushProperty("CorrelationId", current?.CorrelationId ?? jobId))
         {
-            var outcome = await operation(cancellation.Token);
-            Update(jobId, job => job with
+            Update(jobId, job => job with { Status = ApiJobStatus.Running, StartedAt = DateTimeOffset.UtcNow });
+            _logger.LogInformation("API job {JobId} started", jobId);
+            try
             {
-                Status = ApiJobStatus.Completed,
-                CompletedAt = DateTimeOffset.UtcNow,
-                ResultPath = outcome.ResultPath,
-                Message = outcome.Message
-            });
-        }
-        catch (OperationCanceledException)
-        {
-            Update(jobId, job => job with
+                var outcome = await operation(cancellation.Token);
+                Update(jobId, job => job with
+                {
+                    Status = ApiJobStatus.Completed,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    ResultPath = outcome.ResultPath,
+                    Message = outcome.Message
+                });
+                _logger.LogInformation("API job {JobId} completed", jobId);
+            }
+            catch (OperationCanceledException)
             {
-                Status = ApiJobStatus.Canceled,
-                CompletedAt = DateTimeOffset.UtcNow,
-                Message = "Job was canceled."
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "API job {JobId} failed", jobId);
-            Update(jobId, job => job with
+                Update(jobId, job => job with
+                {
+                    Status = ApiJobStatus.Canceled,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    Message = "Job was canceled."
+                });
+                _logger.LogInformation("API job {JobId} canceled", jobId);
+            }
+            catch (Exception ex)
             {
-                Status = ApiJobStatus.Failed,
-                CompletedAt = DateTimeOffset.UtcNow,
-                Error = ex.Message
-            });
-        }
-        finally
-        {
-            _cancellations.TryRemove(jobId, out _);
-            cancellation.Dispose();
+                _logger.LogError(ex, "API job {JobId} failed", jobId);
+                Update(jobId, job => job with
+                {
+                    Status = ApiJobStatus.Failed,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    Error = ex.Message
+                });
+            }
+            finally
+            {
+                _cancellations.TryRemove(jobId, out _);
+                cancellation.Dispose();
+            }
         }
     }
 
@@ -188,6 +210,7 @@ public sealed record ApiJobRecord(
     string? TargetPath,
     string? ResultPath,
     string? Error,
+    string? CorrelationId = null,
     string? Message = null);
 
 public sealed record ApiJobOutcome(string? ResultPath = null, string? Message = null);
