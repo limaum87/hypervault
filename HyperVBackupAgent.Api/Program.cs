@@ -14,6 +14,7 @@ builder.Host.UseSerilog();
 builder.Services.AddHyperVBackupAgent(builder.Configuration);
 builder.Services.AddSingleton<ApiPathValidator>();
 builder.Services.AddSingleton<ApiJobService>();
+builder.Services.AddSingleton<ApiAgentInfoService>();
 
 var app = builder.Build();
 
@@ -70,6 +71,8 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/agent", (ApiAgentInfoService agent) => Results.Ok(agent.GetAgentInfo()));
+app.MapGet("/configuration/effective", (ApiAgentInfoService agent) => Results.Ok(agent.GetEffectiveConfiguration()));
 app.MapGet("/agent/certificate", (IConfiguration configuration, IWebHostEnvironment environment) =>
 {
     var certificate = ApiCertificateManager.TryGetCertificateInfo(configuration, environment.ContentRootPath);

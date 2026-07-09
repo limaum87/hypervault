@@ -198,7 +198,9 @@ If a customer already has a certificate, set `Certificate:Path` and `Certificate
 Implemented endpoints:
 
 - `GET /health`
+- `GET /agent`
 - `GET /agent/certificate`
+- `GET /configuration/effective`
 - `GET /jobs`
 - `GET /jobs/{id}`
 - `POST /jobs/{id}/cancel`

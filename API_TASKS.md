@@ -36,6 +36,7 @@ Ja implementado:
 - Respostas de erro em JSON para token ausente/invalido, request invalido, conflito, nao encontrado e erro inesperado.
 - Geracao automatica de certificado self-signed local para HTTPS, com endpoint autenticado para expor fingerprint.
 - Endpoints de jobs assincronos para backup, verify e restore, com historico JSON local.
+- Endpoints de inventario do agente e configuracao efetiva sanitizada para integracao com servidor central.
 
 ## P0 - Necessario Antes de Producao
 
@@ -147,6 +148,8 @@ Criterio de aceite:
 
 ### 6. Endpoint de informacoes do agente
 
+Status: implementado inicialmente.
+
 Adicionar:
 
 - `GET /agent`
@@ -166,6 +169,8 @@ Criterio de aceite:
 - Servidor central consegue inventariar agentes.
 
 ### 7. Endpoint de configuracao efetiva
+
+Status: implementado inicialmente.
 
 Adicionar:
 
