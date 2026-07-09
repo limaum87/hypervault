@@ -55,6 +55,11 @@ public interface IRestorePointCatalog
     Task<IReadOnlyList<RestorePointSummary>> ListRestorePointsAsync(string vmIdOrName, CancellationToken cancellationToken = default);
 }
 
+public interface IRetentionService
+{
+    Task<IReadOnlyList<RetentionResult>> ApplyRetentionAsync(RetentionRequest request, CancellationToken cancellationToken = default);
+}
+
 public interface IHashService
 {
     Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken = default);

@@ -169,6 +169,40 @@ public sealed class BackupEngineTests
         Assert.True(Directory.Exists(restorePoint.ChainPath));
     }
 
+    [Fact]
+    public async Task RetentionDeletesOldChainsButKeepsNewestValidFull()
+    {
+        var root = CreateTempDirectory();
+        var backupRoot = Path.Combine(root, "backups");
+        var repository = new JsonMetadataRepository();
+        var oldChain = await CreateChainAsync(repository, backupRoot, "vm-1", "ERP01", "chain-old", DateTimeOffset.UtcNow.AddDays(-10), BackupStatus.Completed);
+        var newChain = await CreateChainAsync(repository, backupRoot, "vm-1", "ERP01", "chain-new", DateTimeOffset.UtcNow, BackupStatus.Completed);
+        var retention = new FileSystemRetentionService(repository);
+
+        var results = await retention.ApplyRetentionAsync(new RetentionRequest(backupRoot, KeepLastChains: 1));
+
+        Assert.False(Directory.Exists(oldChain));
+        Assert.True(Directory.Exists(newChain));
+        Assert.Contains(results, result => result.ChainId == "chain-old" && result.Deleted);
+        Assert.Contains(results, result => result.ChainId == "chain-new" && result.Reason == "protected-last-valid-full");
+    }
+
+    [Fact]
+    public async Task RetentionDoesNotDeleteIncompleteChainsAutomatically()
+    {
+        var root = CreateTempDirectory();
+        var backupRoot = Path.Combine(root, "backups");
+        var repository = new JsonMetadataRepository();
+        var incompleteChain = await CreateChainAsync(repository, backupRoot, "vm-1", "ERP01", "chain-failed", DateTimeOffset.UtcNow.AddDays(-10), BackupStatus.Failed);
+        await CreateChainAsync(repository, backupRoot, "vm-1", "ERP01", "chain-valid", DateTimeOffset.UtcNow, BackupStatus.Completed);
+        var retention = new FileSystemRetentionService(repository);
+
+        var results = await retention.ApplyRetentionAsync(new RetentionRequest(backupRoot, KeepLastChains: 1, KeepDays: 1));
+
+        Assert.True(Directory.Exists(incompleteChain));
+        Assert.Contains(results, result => result.ChainId == "chain-failed" && !result.Deleted && result.Warning is not null);
+    }
+
     private static ServiceProvider BuildServices(string simulationRoot, string? backupRoot = null)
     {
         var settings = new Dictionary<string, string?>
@@ -195,5 +229,42 @@ public sealed class BackupEngineTests
         var path = Path.Combine(Path.GetTempPath(), "hvba-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private static async Task<string> CreateChainAsync(
+        IMetadataRepository repository,
+        string backupRoot,
+        string vmId,
+        string vmName,
+        string chainId,
+        DateTimeOffset createdAt,
+        BackupStatus status)
+    {
+        var chainDirectory = Path.Combine(backupRoot, Environment.MachineName, vmId, chainId);
+        var backupId = $"{chainId}-full";
+        var backup = new BackupMetadata
+        {
+            BackupId = backupId,
+            Type = BackupType.Full,
+            CreatedAt = createdAt,
+            VmId = vmId,
+            VmName = vmName,
+            Status = status
+        };
+        var chain = new BackupChainMetadata
+        {
+            ChainId = chainId,
+            VmId = vmId,
+            VmName = vmName,
+            SourceHost = Environment.MachineName,
+            CreatedAt = createdAt,
+            LatestRestorePoint = backupId,
+            FullBackupId = backupId,
+            Status = status,
+            RestorePoints = { backup }
+        };
+
+        await repository.SaveChainAsync(chainDirectory, chain);
+        return chainDirectory;
     }
 }

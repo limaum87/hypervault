@@ -60,6 +60,8 @@ app.MapPost("/restore", async (RestoreRequest request, IRestoreEngine engine, Ca
 });
 app.MapPost("/maintenance/cleanup-temp-checkpoints", async (CleanupCheckpointsRequest request, IHyperVService hyperV, CancellationToken ct) =>
     Results.Ok(await hyperV.CleanupTemporaryCheckpointsAsync(request.NamePrefix, ct)));
+app.MapPost("/maintenance/apply-retention", async (RetentionRequest request, IRetentionService retention, CancellationToken ct) =>
+    Results.Ok(await retention.ApplyRetentionAsync(request, ct)));
 
 app.Run();
 

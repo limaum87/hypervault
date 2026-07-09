@@ -29,6 +29,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IMetadataRepository, JsonMetadataRepository>();
         services.AddSingleton<IRestorePointCatalog>(serviceProvider =>
             new FileSystemRestorePointCatalog(backupRoot, serviceProvider.GetRequiredService<IMetadataRepository>()));
+        services.AddSingleton<IRetentionService, FileSystemRetentionService>();
         services.AddSingleton<IHashService, HashService>();
         services.AddSingleton<IBackupEngine, BackupEngine>();
         services.AddSingleton<IVerifyEngine, VerifyEngine>();

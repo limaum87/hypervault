@@ -31,6 +31,7 @@ try
         "verify-restore" => await VerifyRestoreAsync(Required(args, "--restore-point")),
         "restore" => await RestoreAsync(Required(args, "--restore-point"), Required(args, "--destination"), Required(args, "--new-name"), HasFlag(args, "--overwrite"), Optional(args, "--backup-id")),
         "cleanup-temp-checkpoints" => await CleanupTemporaryCheckpointsAsync(Optional(args, "--prefix") ?? "HyperVBackupAgent-"),
+        "apply-retention" => await ApplyRetentionAsync(Required(args, "--backup-root"), int.Parse(Optional(args, "--keep-chains") ?? "7"), ParseNullableInt(Optional(args, "--keep-days")), HasFlag(args, "--dry-run")),
         "list-restore-points" => await ListRestorePointsAsync(Required(args, "--chain-id")),
         _ => Unknown(args[0])
     };
@@ -141,6 +142,21 @@ async Task<int> CleanupTemporaryCheckpointsAsync(string prefix)
     return results.All(result => result.Removed) ? 0 : 1;
 }
 
+async Task<int> ApplyRetentionAsync(string backupRoot, int keepChains, int? keepDays, bool dryRun)
+{
+    var results = await services.GetRequiredService<IRetentionService>()
+        .ApplyRetentionAsync(new RetentionRequest(backupRoot, keepChains, keepDays, dryRun));
+
+    foreach (var result in results)
+    {
+        var status = result.Deleted ? "deleted" : "kept";
+        Console.WriteLine($"{status}\t{result.VmName}\t{result.ChainId}\t{result.Reason}\t{result.Warning}");
+    }
+
+    Console.WriteLine($"apply-retention completed: deleted={results.Count(result => result.Deleted)} kept={results.Count(result => !result.Deleted)}");
+    return 0;
+}
+
 static string Required(string[] args, string name)
 {
     var index = Array.IndexOf(args, name);
@@ -157,6 +173,9 @@ static string? Optional(string[] args, string name)
     var index = Array.IndexOf(args, name);
     return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
 }
+
+static int? ParseNullableInt(string? value)
+    => int.TryParse(value, out var parsed) ? parsed : null;
 
 static bool HasFlag(string[] args, string name) => args.Contains(name, StringComparer.OrdinalIgnoreCase);
 
@@ -193,6 +212,7 @@ static void PrintHelp()
       verify-restore --restore-point "C:\backup\host\vm\chain-..."
       restore --restore-point "C:\backup\host\vm\chain-..." --destination "C:\restore" --new-name "ERP01-Restore-Test" [--backup-id "inc-0001"] [--overwrite]
       cleanup-temp-checkpoints [--prefix "HyperVBackupAgent-"]
+      apply-retention --backup-root "C:\backup\hyperv" [--keep-chains 7] [--keep-days 30] [--dry-run]
       list-restore-points --chain-id "C:\backup\host\vm\chain-..."
     """);
 }

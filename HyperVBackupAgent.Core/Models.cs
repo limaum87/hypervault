@@ -76,6 +76,21 @@ public sealed record RestorePointSummary(
     string ChainPath,
     string? ParentBackupId = null);
 
+public sealed record RetentionRequest(
+    string BackupRoot,
+    int KeepLastChains = 7,
+    int? KeepDays = null,
+    bool DryRun = false);
+
+public sealed record RetentionResult(
+    string ChainId,
+    string VmId,
+    string VmName,
+    string ChainPath,
+    bool Deleted,
+    string Reason,
+    string? Warning = null);
+
 public sealed record VerifyResult(
     bool IsValid,
     IReadOnlyList<string> Errors,
