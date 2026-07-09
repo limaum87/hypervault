@@ -1,0 +1,13 @@
+@HyperVBackupAgent.Api_HostAddress = http://localhost:5020
+@ApiToken = dev-token
+
+GET {{HyperVBackupAgent.Api_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{HyperVBackupAgent.Api_HostAddress}}/vms
+Accept: application/json
+Authorization: Bearer {{ApiToken}}
+
+###
