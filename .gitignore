@@ -8,3 +8,9 @@ TestResults/
 *.trx
 appsettings.Local.json
 artifacts/
+
+# HyperVault Manager local runtime data (SQLite DB, data-protection keys)
+HyperVaultManager/data/
+HyperVaultManager/*.db
+HyperVaultManager/*.db-shm
+HyperVaultManager/*.db-wal

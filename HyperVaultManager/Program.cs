@@ -1,0 +1,720 @@
+using System.Security.Claims;
+using System.Text.Json;
+using HyperVaultManager.Data;
+using HyperVaultManager.Dtos;
+using HyperVaultManager.Models;
+using HyperVaultManager.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Serilog;
+using Serilog.Formatting.Compact;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((ctx, _, lc) => lc
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .WriteTo.Console(new RenderedCompactJsonFormatter()));
+
+var dataPath = builder.Configuration["Manager:DataPath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "data");
+Directory.CreateDirectory(dataPath);
+var dbPath = Path.Combine(dataPath, "hypervault.db");
+var connStr = $"Data Source={dbPath}";
+
+builder.Services.AddDbContext<ManagerDbContext>(opt => opt.UseSqlite(connStr));
+builder.Services.AddSingleton<IJobQueue, JobQueue>();
+builder.Services.AddSingleton<AgentClient>();
+builder.Services.AddSingleton<PasswordHasher>();
+builder.Services.AddHostedService<JobRunnerWorker>();
+builder.Services.AddHostedService<SchedulerWorker>();
+builder.Services.AddHostedService<HostHealthWorker>();
+builder.Services.AddHttpContextAccessor();
+
+// Persist data-protection keys (cookie auth) to the mounted volume so sessions
+// survive container redeploys instead of being invalidated.
+var keyPath = Path.Combine(dataPath, "keys");
+Directory.CreateDirectory(keyPath);
+builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+
+const string AuthScheme = "cookie";
+builder.Services
+    .AddAuthentication(AuthScheme)
+    .AddCookie(AuthScheme, options =>
+    {
+        options.Cookie.Name = "hypervault_auth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.SlidingExpiration = true;
+        // For API calls, respond with 401 JSON instead of redirecting.
+        options.Events.OnRedirectToLogin = ctx => WriteAuthStatusAsync(ctx.HttpContext, StatusCodes.Status401Unauthorized, "unauthorized", "Authentication required.");
+        options.Events.OnRedirectToAccessDenied = ctx => WriteAuthStatusAsync(ctx.HttpContext, StatusCodes.Status403Forbidden, "forbidden", "You do not have permission to do that.");
+    });
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("admin", p => p.RequireAuthenticatedUser().RequireClaim("role", Roles.Admin));
+});
+
+builder.Services.AddHttpClient("agent")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    })
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(20));
+
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
+
+var app = builder.Build();
+
+// ---- DB init + seed admin ----
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<ManagerDbContext>();
+    db.Database.EnsureCreated();
+    // Ensure the users table exists even if an older DB was created before auth.
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "AppUsers" (
+            "Id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "Username" TEXT NOT NULL,
+            "PasswordHash" TEXT NOT NULL,
+            "Role" TEXT NOT NULL DEFAULT 'user',
+            "Enabled" INTEGER NOT NULL DEFAULT 1,
+            "CreatedAt" TEXT NOT NULL DEFAULT '0001-01-01T00:00:00.0000000+00:00',
+            "UpdatedAt" TEXT NOT NULL DEFAULT '0001-01-01T00:00:00.0000000+00:00',
+            "LastLoginAt" TEXT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_AppUsers_Username" ON "AppUsers" ("Username");
+        """);
+
+    if (!db.Users.Any())
+    {
+        var hasher = scope.ServiceProvider.GetRequiredService<PasswordHasher>();
+        db.Users.Add(new AppUser
+        {
+            Username = "admin",
+            PasswordHash = hasher.Hash("admin"),
+            Role = Roles.Admin,
+            Enabled = true
+        });
+        await db.SaveChangesAsync();
+        app.Logger.LogWarning("Seeded default admin user 'admin' with password 'admin'. CHANGE IT IMMEDIATELY from Settings.");
+    }
+}
+
+static async Task WriteAuthStatusAsync(HttpContext ctx, int code, string errorCode, string message)
+{
+    if (ctx.Response.HasStarted) return;
+    ctx.Response.StatusCode = code;
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsJsonAsync(new ApiError(errorCode, message, ctx.TraceIdentifier));
+}
+
+// ---- error handling ----
+app.Use(async (ctx, next) =>
+{
+    try { await next(); }
+    catch (AgentCallException ex)
+    {
+        await WriteErrorAsync(ctx, StatusCodes.Status502BadGateway, "agent_error", ex.Message);
+    }
+    catch (ArgumentException ex)
+    {
+        await WriteErrorAsync(ctx, StatusCodes.Status400BadRequest, "invalid_request", ex.Message);
+    }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+    {
+        await WriteErrorAsync(ctx, StatusCodes.Status404NotFound, "not_found", ex.Message);
+    }
+    catch (InvalidOperationException ex) when (
+        ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("overwrite", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("cannot ", StringComparison.OrdinalIgnoreCase))
+    {
+        await WriteErrorAsync(ctx, StatusCodes.Status409Conflict, "conflict", ex.Message);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Unhandled error {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+        await WriteErrorAsync(ctx, StatusCodes.Status500InternalServerError, "internal_error", "An unexpected error occurred.");
+    }
+});
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+// All API endpoints require authentication unless explicitly marked AllowAnonymous.
+var api = app.MapGroup("/api").RequireAuthorization();
+
+// ---------- HEALTH (public) ----------
+api.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+
+// ---------- AUTH ----------
+api.MapPost("/auth/login", async (LoginDto dto, ManagerDbContext db, PasswordHasher hasher, HttpContext ctx) =>
+{
+    dto = dto with { Username = (dto.Username ?? "").Trim().ToLowerInvariant() };
+    if (string.IsNullOrEmpty(dto.Username) || string.IsNullOrEmpty(dto.Password))
+        throw new ArgumentException("Username and password are required.");
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Username == dto.Username);
+    if (user is null || !user.Enabled || !hasher.Verify(dto.Password, user.PasswordHash))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Results.Json(new ApiError("invalid_credentials", "Invalid username or password."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    user.LastLoginAt = DateTimeOffset.UtcNow;
+    await db.SaveChangesAsync();
+    await SignInAsync(ctx, user);
+    return Results.Ok(Map.Me(user));
+}).AllowAnonymous();
+
+api.MapPost("/auth/logout", async (HttpContext ctx) =>
+{
+    await ctx.SignOutAsync("cookie");
+    return Results.Ok(new { ok = true });
+});
+
+api.MapGet("/auth/me", (HttpContext ctx) =>
+{
+    var id = CurrentUserId(ctx);
+    return Results.Ok(new { id, username = CurrentUsername(ctx), role = CurrentRole(ctx) });
+});
+
+api.MapPost("/auth/change-password", async (ChangePasswordDto dto, ManagerDbContext db, PasswordHasher hasher, HttpContext ctx) =>
+{
+    if (string.IsNullOrWhiteSpace(dto.NewPassword) || dto.NewPassword.Length < 4)
+        throw new ArgumentException("New password must be at least 4 characters.");
+    var id = CurrentUserId(ctx);
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id)
+        ?? throw new InvalidOperationException($"User {id} not found");
+    if (!hasher.Verify(dto.CurrentPassword, user.PasswordHash))
+        throw new ArgumentException("Current password is incorrect.");
+    user.PasswordHash = hasher.Hash(dto.NewPassword);
+    user.UpdatedAt = DateTimeOffset.UtcNow;
+    await db.SaveChangesAsync();
+    return Results.Ok(new { ok = true });
+});
+
+// ---------- USERS (admin only) ----------
+api.MapGet("/users", async (ManagerDbContext db) =>
+{
+    var list = await db.Users.OrderBy(u => u.Username).ToListAsync();
+    return Results.Ok(list.Select(Map.Me));
+}).RequireAuthorization("admin");
+
+api.MapPost("/users", async (UserCreateDto dto, ManagerDbContext db, PasswordHasher hasher) =>
+{
+    var username = (dto.Username ?? "").Trim().ToLowerInvariant();
+    if (string.IsNullOrEmpty(username)) throw new ArgumentException("Username is required.");
+    if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 4)
+        throw new ArgumentException("Password must be at least 4 characters.");
+    if (await db.Users.AnyAsync(u => u.Username == username))
+        throw new InvalidOperationException($"User '{username}' already exists");
+    var user = new AppUser
+    {
+        Username = username,
+        PasswordHash = hasher.Hash(dto.Password),
+        Role = dto.Role == Roles.Admin ? Roles.Admin : Roles.User,
+        Enabled = dto.Enabled
+    };
+    db.Users.Add(user); await db.SaveChangesAsync();
+    return Results.Created($"/api/users/{user.Id}", Map.Me(user));
+}).RequireAuthorization("admin");
+
+api.MapPut("/users/{id:int}", async (int id, UserUpdateDto dto, ManagerDbContext db) =>
+{
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id)
+        ?? throw new InvalidOperationException($"User {id} not found");
+    var username = (dto.Username ?? "").Trim().ToLowerInvariant();
+    if (string.IsNullOrEmpty(username)) throw new ArgumentException("Username is required.");
+    if (await db.Users.AnyAsync(u => u.Username == username && u.Id != id))
+        throw new InvalidOperationException($"User '{username}' already exists");
+    // Prevent removing the last admin role.
+    if (user.Role == Roles.Admin && dto.Role != Roles.Admin)
+    {
+        var adminCount = await db.Users.CountAsync(u => u.Role == Roles.Admin && u.Enabled);
+        if (adminCount <= 1) throw new InvalidOperationException("Cannot demote the last enabled admin.");
+    }
+    user.Username = username;
+    user.Role = dto.Role == Roles.Admin ? Roles.Admin : Roles.User;
+    user.Enabled = dto.Enabled;
+    user.UpdatedAt = DateTimeOffset.UtcNow;
+    await db.SaveChangesAsync();
+    return Results.Ok(Map.Me(user));
+}).RequireAuthorization("admin");
+
+api.MapPost("/users/{id:int}/reset-password", async (int id, ResetPasswordDto dto, ManagerDbContext db, PasswordHasher hasher) =>
+{
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id)
+        ?? throw new InvalidOperationException($"User {id} not found");
+    if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 4)
+        throw new ArgumentException("Password must be at least 4 characters.");
+    user.PasswordHash = hasher.Hash(dto.Password);
+    user.UpdatedAt = DateTimeOffset.UtcNow;
+    await db.SaveChangesAsync();
+    return Results.Ok(new { ok = true });
+}).RequireAuthorization("admin");
+
+api.MapDelete("/users/{id:int}", async (int id, ManagerDbContext db, HttpContext ctx) =>
+{
+    if (id == CurrentUserId(ctx))
+        throw new InvalidOperationException("You cannot delete your own account.");
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id)
+        ?? throw new InvalidOperationException($"User {id} not found");
+    if (user.Role == Roles.Admin)
+    {
+        var adminCount = await db.Users.CountAsync(u => u.Role == Roles.Admin && u.Enabled);
+        if (adminCount <= 1) throw new InvalidOperationException("Cannot delete the last admin.");
+    }
+    db.Users.Remove(user); await db.SaveChangesAsync();
+    return Results.NoContent();
+}).RequireAuthorization("admin");
+
+// ---------- HOSTS ----------
+api.MapGet("/hosts", async (ManagerDbContext db) =>
+{
+    var hosts = await db.Hosts.OrderBy(h => h.Name).ToListAsync();
+    var counts = await db.VirtualMachines
+        .GroupBy(v => v.HostId)
+        .Select(g => new { g.Key, Count = g.Count() })
+        .ToDictionaryAsync(x => x.Key, x => x.Count);
+    return Results.Ok(hosts.Select(h => Map.Host(h, counts.GetValueOrDefault(h.Id))));
+});
+
+api.MapGet("/hosts/{id:int}", async (int id, ManagerDbContext db) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    var vmCount = await db.VirtualMachines.CountAsync(v => v.HostId == id);
+    return Results.Ok(Map.Host(host, vmCount));
+});
+
+api.MapPost("/hosts", async (HostCreateDto dto, ManagerDbContext db) =>
+{
+    if (string.IsNullOrWhiteSpace(dto.Name)) throw new ArgumentException("Name is required");
+    if (string.IsNullOrWhiteSpace(dto.IpOrFqdn)) throw new ArgumentException("IpOrFqdn is required");
+    if (await db.Hosts.AnyAsync(h => h.Name == dto.Name))
+        throw new InvalidOperationException($"Host '{dto.Name}' already exists");
+
+    var host = new HyperVHost
+    {
+        Name = dto.Name.Trim(),
+        IpOrFqdn = dto.IpOrFqdn.Trim(),
+        Port = dto.Port <= 0 ? 5443 : dto.Port,
+        UseHttps = dto.UseHttps,
+        ApiToken = dto.ApiToken ?? string.Empty,
+        CertificateFingerprint = dto.CertificateFingerprint,
+        Notes = dto.Notes,
+        Status = HostStatuses.Unknown
+    };
+    db.Hosts.Add(host);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/hosts/{host.Id}", Map.Host(host, 0));
+});
+
+api.MapPut("/hosts/{id:int}", async (int id, HostUpdateDto dto, ManagerDbContext db) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    host.Name = dto.Name.Trim();
+    host.IpOrFqdn = dto.IpOrFqdn.Trim();
+    host.Port = dto.Port <= 0 ? host.Port : dto.Port;
+    host.UseHttps = dto.UseHttps;
+    if (!string.IsNullOrWhiteSpace(dto.ApiToken)) host.ApiToken = dto.ApiToken;
+    host.CertificateFingerprint = dto.CertificateFingerprint;
+    host.Notes = dto.Notes;
+    host.UpdatedAt = DateTimeOffset.UtcNow;
+    await db.SaveChangesAsync();
+    return Results.Ok(Map.Host(host, await db.VirtualMachines.CountAsync(v => v.HostId == id)));
+});
+
+api.MapDelete("/hosts/{id:int}", async (int id, ManagerDbContext db) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    db.Hosts.Remove(host);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+api.MapPost("/hosts/{id:int}/test", async (int id, AgentClient agent, ManagerDbContext db) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    try
+    {
+        var health = await agent.GetHealthAsync(host);
+        host.Status = health.IsReady ? HostStatuses.Online : HostStatuses.Offline;
+        host.LastSeenAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Results.Ok(new { status = host.Status, live = health.LiveStatus, ready = health.ReadyStatus });
+    }
+    catch (Exception ex)
+    {
+        host.Status = HostStatuses.Offline;
+        await db.SaveChangesAsync();
+        return Results.Ok(new { status = HostStatuses.Offline, error = ex.Message });
+    }
+});
+
+api.MapPost("/hosts/{id:int}/sync-vms", async (int id, AgentClient agent, ManagerDbContext db) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    var vms = await agent.GetVmsAsync(host);
+    var now = DateTimeOffset.UtcNow;
+    var existing = await db.VirtualMachines.Where(v => v.HostId == id).ToListAsync();
+    foreach (var snap in vms)
+    {
+        var ent = existing.FirstOrDefault(e => e.ExternalId == snap.Id);
+        if (ent is null)
+        {
+            db.VirtualMachines.Add(new VirtualMachine
+            {
+                HostId = id, ExternalId = snap.Id, Name = snap.Name, State = snap.State,
+                Generation = snap.Generation, MemoryBytes = snap.MemoryBytes, DiskSizeBytes = snap.DiskSizeBytes,
+                LastSyncedAt = now
+            });
+        }
+        else
+        {
+            ent.Name = snap.Name; ent.State = snap.State; ent.Generation = snap.Generation;
+            ent.MemoryBytes = snap.MemoryBytes; ent.DiskSizeBytes = snap.DiskSizeBytes; ent.LastSyncedAt = now;
+        }
+    }
+    await db.SaveChangesAsync();
+    var result = await db.VirtualMachines.Where(v => v.HostId == id).ToListAsync();
+    return Results.Ok(result.Select(v => Map.Vm(v, host.Name)));
+});
+
+api.MapGet("/hosts/{id:int}/vms/{vmId:int}/restore-points", async (int id, int vmId, AgentClient agent, ManagerDbContext db) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    var vm = await db.VirtualMachines.FirstOrDefaultAsync(v => v.Id == vmId && v.HostId == id)
+        ?? throw new InvalidOperationException($"VM {vmId} not found");
+    return Results.Ok(await agent.GetRestorePointsAsync(host, vm.ExternalId));
+});
+
+// ---------- STORAGES ----------
+api.MapGet("/storages", async (ManagerDbContext db) =>
+{
+    var list = await db.Storages.OrderBy(s => s.Name).ToListAsync();
+    return Results.Ok(list.Select(Map.Storage));
+});
+
+api.MapPost("/storages", async (StorageCreateDto dto, ManagerDbContext db) =>
+{
+    if (string.IsNullOrWhiteSpace(dto.Name)) throw new ArgumentException("Name is required");
+    if (string.IsNullOrWhiteSpace(dto.Path)) throw new ArgumentException("Path is required");
+    var s = new StorageTarget { Name = dto.Name.Trim(), Type = dto.Type, Path = dto.Path, Notes = dto.Notes };
+    db.Storages.Add(s); await db.SaveChangesAsync();
+    return Results.Created($"/api/storages/{s.Id}", Map.Storage(s));
+});
+
+api.MapPut("/storages/{id:int}", async (int id, StorageCreateDto dto, ManagerDbContext db) =>
+{
+    var s = await db.Storages.FirstOrDefaultAsync(x => x.Id == id)
+        ?? throw new InvalidOperationException($"Storage {id} not found");
+    s.Name = dto.Name.Trim(); s.Type = dto.Type; s.Path = dto.Path; s.Notes = dto.Notes;
+    await db.SaveChangesAsync();
+    return Results.Ok(Map.Storage(s));
+});
+
+api.MapDelete("/storages/{id:int}", async (int id, ManagerDbContext db) =>
+{
+    var s = await db.Storages.FirstOrDefaultAsync(x => x.Id == id)
+        ?? throw new InvalidOperationException($"Storage {id} not found");
+    db.Storages.Remove(s); await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+// ---------- VMS ----------
+api.MapGet("/vms", async (int? hostId, ManagerDbContext db) =>
+{
+    var q = db.VirtualMachines.Include(v => v.Host).AsQueryable();
+    if (hostId.HasValue) q = q.Where(v => v.HostId == hostId);
+    var list = await q.OrderByDescending(v => v.Name).ToListAsync();
+    var result = new List<VmViewDto>();
+    foreach (var v in list)
+    {
+        var last = await db.BackupRuns.Where(r => r.VmId == v.Id)
+            .OrderByDescending(r => r.QueuedAt).FirstOrDefaultAsync();
+        result.Add(Map.Vm(v, v.Host?.Name ?? "", last));
+    }
+    return Results.Ok(result);
+});
+
+// ---------- JOBS ----------
+api.MapGet("/jobs", async (ManagerDbContext db) =>
+{
+    var jobs = await db.Jobs.Include(j => j.Host).Include(j => j.Vm).Include(j => j.Storage)
+        .OrderByDescending(j => j.CreatedAt).ToListAsync();
+    return Results.Ok(jobs.Select(Map.Job));
+});
+
+api.MapPost("/jobs", async (JobCreateDto dto, ManagerDbContext db) =>
+{
+    if (await db.Jobs.AnyAsync(j => j.HostId == dto.HostId && j.VmId == dto.VmId && j.Name == dto.Name))
+        throw new InvalidOperationException("A job with that name already exists for the VM");
+    var vm = await db.VirtualMachines.FirstOrDefaultAsync(v => v.Id == dto.VmId)
+        ?? throw new InvalidOperationException($"VM {dto.VmId} not found");
+    var job = new BackupJob
+    {
+        Name = dto.Name.Trim(),
+        HostId = dto.HostId, VmId = dto.VmId, StorageId = dto.StorageId,
+        Type = dto.Type == JobTypes.Incremental ? JobTypes.Incremental : JobTypes.Full,
+        CronSchedule = dto.CronSchedule ?? CronPresets.Disabled,
+        RetentionDays = dto.RetentionDays, Enabled = dto.Enabled,
+        NextRunAt = CronNextRun.Next(dto.CronSchedule, DateTimeOffset.UtcNow)
+    };
+    db.Jobs.Add(job); await db.SaveChangesAsync();
+    await db.Entry(job).Reference(j => j.Host).LoadAsync();
+    await db.Entry(job).Reference(j => j.Vm).LoadAsync();
+    await db.Entry(job).Reference(j => j.Storage).LoadAsync();
+    return Results.Created($"/api/jobs/{job.Id}", Map.Job(job));
+});
+
+api.MapPut("/jobs/{id:int}", async (int id, JobCreateDto dto, ManagerDbContext db) =>
+{
+    var job = await db.Jobs.FirstOrDefaultAsync(j => j.Id == id)
+        ?? throw new InvalidOperationException($"Job {id} not found");
+    job.Name = dto.Name.Trim(); job.HostId = dto.HostId; job.VmId = dto.VmId;
+    job.StorageId = dto.StorageId; job.Type = dto.Type;
+    job.CronSchedule = dto.CronSchedule ?? CronPresets.Disabled;
+    job.RetentionDays = dto.RetentionDays; job.Enabled = dto.Enabled;
+    job.NextRunAt = job.Enabled ? CronNextRun.Next(job.CronSchedule, DateTimeOffset.UtcNow) : null;
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
+api.MapPost("/jobs/{id:int}/run-now", async (int id, ManagerDbContext db, IJobQueue queue) =>
+{
+    var job = await db.Jobs.Include(j => j.Host).Include(j => j.Vm).Include(j => j.Storage)
+        .FirstOrDefaultAsync(j => j.Id == id)
+        ?? throw new InvalidOperationException($"Job {id} not found");
+    var run = await SchedulerFire.FireJobAsync(db, queue, job, default);
+    return Results.Accepted($"/api/backups/{run.Id}", new { run.Id });
+});
+
+api.MapDelete("/jobs/{id:int}", async (int id, ManagerDbContext db) =>
+{
+    var job = await db.Jobs.FirstOrDefaultAsync(j => j.Id == id)
+        ?? throw new InvalidOperationException($"Job {id} not found");
+    db.Jobs.Remove(job); await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+// ---------- BACKUP RUNS / HISTORY ----------
+api.MapGet("/backups", async (int? hostId, int? vmId, int? jobId, string? status, int? limit, ManagerDbContext db) =>
+{
+    var q = db.BackupRuns.Include(r => r.Host).Include(r => r.Vm).Include(r => r.Storage).Include(r => r.Job).AsQueryable();
+    if (hostId.HasValue) q = q.Where(r => r.HostId == hostId);
+    if (vmId.HasValue) q = q.Where(r => r.VmId == vmId);
+    if (jobId.HasValue) q = q.Where(r => r.JobId == jobId);
+    if (!string.IsNullOrWhiteSpace(status)) q = q.Where(r => r.Status == status);
+    q = q.OrderByDescending(r => r.QueuedAt).Take(limit ?? 200);
+    var list = await q.ToListAsync();
+    return Results.Ok(list.Select(Map.BackupRun));
+});
+
+api.MapGet("/backups/{id:int}", async (int id, ManagerDbContext db) =>
+{
+    var run = await db.BackupRuns.Include(r => r.Host).Include(r => r.Vm).Include(r => r.Storage).Include(r => r.Job)
+        .FirstOrDefaultAsync(r => r.Id == id)
+        ?? throw new InvalidOperationException($"Backup {id} not found");
+    return Results.Ok(Map.BackupRun(run));
+});
+
+// Manual backup from a VM
+api.MapPost("/hosts/{hostId:int}/vms/{vmId:int}/backup", async (int hostId, int vmId, ManualBackupDto dto, ManagerDbContext db, IJobQueue queue) =>
+{
+    var vm = await db.VirtualMachines.FirstOrDefaultAsync(v => v.Id == vmId && v.HostId == hostId)
+        ?? throw new InvalidOperationException($"VM {vmId} not found");
+    var storage = await db.Storages.FirstOrDefaultAsync(s => s.Id == dto.StorageId)
+        ?? throw new InvalidOperationException($"Storage {dto.StorageId} not found");
+    var run = new BackupRun
+    {
+        JobId = dto.JobId, HostId = hostId, VmId = vmId, StorageId = dto.StorageId,
+        Type = dto.Type == JobTypes.Incremental ? JobTypes.Incremental : JobTypes.Full,
+        Status = RunStatuses.Queued, QueuedAt = DateTimeOffset.UtcNow
+    };
+    db.BackupRuns.Add(run); await db.SaveChangesAsync();
+    queue.Enqueue(new BackupJobRequest(run.Id));
+    return Results.Accepted($"/api/backups/{run.Id}", new { run.Id });
+});
+
+// ---------- VERIFY ----------
+api.MapGet("/verifications", async (ManagerDbContext db) =>
+{
+    var list = await db.VerificationRuns.Include(v => v.Host).OrderByDescending(v => v.QueuedAt).Take(200).ToListAsync();
+    return Results.Ok(list.Select(Map.Verify));
+});
+
+api.MapPost("/backups/{id:int}/verify", async (int id, ManagerDbContext db, IJobQueue queue) =>
+{
+    var run = await db.BackupRuns.Include(r => r.Host).FirstOrDefaultAsync(r => r.Id == id)
+        ?? throw new InvalidOperationException($"Backup {id} not found");
+    if (run.Host is null) throw new InvalidOperationException("Backup has no host");
+    var target = run.ResultPath;
+    if (string.IsNullOrWhiteSpace(target)) throw new InvalidOperationException("Backup has no result path to verify");
+    var v = new VerificationRun
+    {
+        BackupRunId = id, HostId = run.HostId, Kind = VerifyKinds.Chain,
+        TargetPath = target, Status = RunStatuses.Queued, QueuedAt = DateTimeOffset.UtcNow
+    };
+    db.VerificationRuns.Add(v); await db.SaveChangesAsync();
+    queue.Enqueue(new VerifyJobRequest(v.Id));
+    return Results.Accepted($"/api/verifications/{v.Id}", new { v.Id });
+});
+
+api.MapPost("/verify", async (VerifyDto dto, ManagerDbContext db, IJobQueue queue) =>
+{
+    if (await db.Hosts.AllAsync(h => h.Id != dto.HostId)) throw new InvalidOperationException($"Host {dto.HostId} not found");
+    var v = new VerificationRun
+    {
+        BackupRunId = dto.BackupRunId, HostId = dto.HostId,
+        Kind = dto.Kind == VerifyKinds.Restore ? VerifyKinds.Restore : VerifyKinds.Chain,
+        TargetPath = dto.TargetPath, Status = RunStatuses.Queued, QueuedAt = DateTimeOffset.UtcNow
+    };
+    db.VerificationRuns.Add(v); await db.SaveChangesAsync();
+    queue.Enqueue(new VerifyJobRequest(v.Id));
+    return Results.Accepted($"/api/verifications/{v.Id}", new { v.Id });
+});
+
+// ---------- RESTORE ----------
+api.MapGet("/restores", async (ManagerDbContext db) =>
+{
+    var list = await db.RestoreRuns.Include(r => r.TargetHost).OrderByDescending(r => r.QueuedAt).Take(200).ToListAsync();
+    return Results.Ok(list.Select(Map.Restore));
+});
+
+api.MapPost("/restore", async (RestoreDto dto, ManagerDbContext db, IJobQueue queue) =>
+{
+    if (await db.Hosts.AllAsync(h => h.Id != dto.TargetHostId)) throw new InvalidOperationException($"Target host {dto.TargetHostId} not found");
+    if (!dto.OverwriteExisting && string.IsNullOrWhiteSpace(dto.NewName))
+        throw new ArgumentException("NewName is required when not overwriting (safety check)");
+    var r = new RestoreRun
+    {
+        BackupRunId = dto.BackupRunId, SourceHostId = dto.SourceHostId, TargetHostId = dto.TargetHostId,
+        RestorePointPath = dto.RestorePointPath, Destination = dto.Destination, NewName = dto.NewName,
+        TargetBackupId = dto.TargetBackupId, OverwriteExisting = dto.OverwriteExisting,
+        Status = RunStatuses.Queued, QueuedAt = DateTimeOffset.UtcNow
+    };
+    db.RestoreRuns.Add(r); await db.SaveChangesAsync();
+    queue.Enqueue(new RestoreJobRequest(r.Id));
+    return Results.Accepted($"/api/restores/{r.Id}", new { r.Id });
+});
+
+// ---------- DASHBOARD ----------
+api.MapGet("/dashboard", async (ManagerDbContext db) =>
+{
+    var hosts = await db.Hosts.ToListAsync();
+    var vms = await db.VirtualMachines.ToListAsync();
+    var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
+    var backups = await db.BackupRuns.Include(r => r.Host).Include(r => r.Vm).Include(r => r.Storage).Include(r => r.Job)
+        .OrderByDescending(r => r.QueuedAt).Take(500).ToListAsync();
+
+    var succeededVmIds = backups.Where(b => b.Status == RunStatuses.Succeeded).Select(b => b.VmId).ToHashSet();
+    var vmsWithoutBackup = vms.Count(v => !succeededVmIds.Contains(v.Id));
+
+    var dto = new DashboardDto(
+        TotalHosts: hosts.Count,
+        OnlineHosts: hosts.Count(h => h.Status == HostStatuses.Online),
+        OfflineHosts: hosts.Count(h => h.Status != HostStatuses.Online),
+        TotalVms: vms.Count,
+        VmsWithoutBackup: vmsWithoutBackup,
+        BackupsLast24h: backups.Count(b => b.QueuedAt >= cutoff),
+        FailedBackupsLast24h: backups.Count(b => b.QueuedAt >= cutoff && b.Status == RunStatuses.Failed),
+        EstimatedStorageBytes: backups.Where(b => b.Status == RunStatuses.Succeeded).Sum(b => b.SizeBytes),
+        RecentBackups: backups.Take(10).Select(Map.BackupRun).ToList(),
+        RecentFailures: backups.Where(b => b.Status == RunStatuses.Failed).Take(5).Select(Map.BackupRun).ToList());
+
+    return Results.Ok(dto);
+});
+
+app.MapFallbackToFile("index.html");
+app.Run();
+return;
+
+// ---------- helpers ----------
+static async Task WriteErrorAsync(HttpContext ctx, int code, string errorCode, string message)
+{
+    if (ctx.Response.HasStarted) return;
+    ctx.Response.StatusCode = code;
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsJsonAsync(new ApiError(errorCode, message, ctx.TraceIdentifier));
+}
+
+static async Task SignInAsync(HttpContext ctx, AppUser user)
+{
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        new(ClaimTypes.Name, user.Username),
+        new("role", user.Role),
+    };
+    var identity = new ClaimsIdentity(claims, "cookie", ClaimTypes.Name, "role");
+    await ctx.SignInAsync("cookie", new ClaimsPrincipal(identity));
+}
+
+static int CurrentUserId(HttpContext ctx) =>
+    int.TryParse(ctx.User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : 0;
+static string CurrentUsername(HttpContext ctx) => ctx.User.FindFirstValue(ClaimTypes.Name) ?? "";
+static string CurrentRole(HttpContext ctx) => ctx.User.FindFirstValue("role") ?? "";
+
+static class Map
+{
+    public static HostViewDto Host(HyperVHost h, int vmCount) => new(
+        h.Id, h.Name, h.IpOrFqdn, h.Port, h.UseHttps, h.Status, h.AgentVersion, h.LastSeenAt,
+        h.Notes, !string.IsNullOrWhiteSpace(h.ApiToken), vmCount);
+
+    public static StorageViewDto Storage(StorageTarget s) =>
+        new(s.Id, s.Name, s.Type, s.Path, s.Notes, s.CreatedAt);
+
+    public static VmViewDto Vm(VirtualMachine v, string hostName, BackupRun? last = null) => new(
+        v.Id, v.HostId, hostName, v.ExternalId, v.Name, v.State, v.Generation, v.MemoryBytes,
+        v.DiskSizeBytes, v.LastSyncedAt, last?.CompletedAt, last?.Status);
+
+    public static JobViewDto Job(BackupJob j) => new(
+        j.Id, j.Name, j.HostId, j.Host?.Name ?? "", j.VmId, j.Vm?.Name ?? j.Vm?.ExternalId ?? "",
+        j.StorageId, j.Storage?.Name ?? "", j.Type, j.CronSchedule, j.RetentionDays, j.Enabled,
+        j.LastRunAt, j.NextRunAt, j.CreatedAt);
+
+    public static BackupRunViewDto BackupRun(BackupRun r) => new(
+        r.Id, r.JobId, r.Job?.Name, r.HostId, r.Host?.Name ?? "", r.VmId, r.Vm?.Name ?? r.Vm?.ExternalId ?? "",
+        r.StorageId, r.Storage?.Name ?? "", r.Type, r.Status, r.AgentJobId, r.CorrelationId,
+        r.ResultPath, r.ChainId, r.BackupId, r.SizeBytes, r.DurationSeconds, r.Message, r.Error,
+        r.QueuedAt, r.StartedAt, r.CompletedAt);
+
+    public static VerificationRunViewDto Verify(VerificationRun v) => new(
+        v.Id, v.BackupRunId, v.HostId, v.Host?.Name ?? "", v.Kind, v.TargetPath, v.Status, v.IsValid,
+        v.AgentJobId, v.CorrelationId, v.Errors, v.Warnings, v.QueuedAt, v.StartedAt, v.CompletedAt);
+
+    public static RestoreRunViewDto Restore(RestoreRun r) => new(
+        r.Id, r.BackupRunId, r.SourceHostId, r.TargetHostId, r.TargetHost?.Name ?? "", r.NewName,
+        r.Destination, r.Status, r.AgentJobId, r.CorrelationId, r.Error, r.Message,
+        r.QueuedAt, r.StartedAt, r.CompletedAt);
+
+    public static MeDto Me(AppUser u) => new(u.Id, u.Username, u.Role, u.Enabled, u.CreatedAt, u.LastLoginAt);
+}
+
+// Make Program accessible for integration tests
+public partial class Program { }

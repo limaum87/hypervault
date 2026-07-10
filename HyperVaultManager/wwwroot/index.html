@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title data-i18n="app.title">HyperVault Manager</title>
+  <meta name="theme-color" content="#0b1220" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23f5b301'/><path d='M18 18h10v10H18zM36 18h10v28H36zM18 36h10v10H18z' fill='%230b1220'/></svg>" />
+</head>
+<body>
+  <!-- login screen -->
+  <div id="loginScreen" class="login-screen">
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <div class="brand-mark login-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="44" height="44"><rect width="64" height="64" rx="14" fill="currentColor"/><path d="M18 18h10v10H18zM36 18h10v28H36zM18 36h10v10H18z" fill="#0b1220"/></svg>
+      </div>
+      <h2 class="login-title" data-i18n="app.title">HyperVault</h2>
+      <p class="login-sub" data-i18n="auth.sign_in_subtitle">Sign in to your account</p>
+      <div class="field">
+        <label data-i18n="auth.username">Username</label>
+        <input name="username" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label data-i18n="auth.password">Password</label>
+        <input name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <p id="loginError" class="login-error hidden"></p>
+      <button type="submit" class="btn primary login-submit" data-i18n="auth.sign_in">Sign in</button>
+    </form>
+  </div>
+
+  <div class="app" id="appShell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="34" height="34"><rect width="64" height="64" rx="14" fill="currentColor"/><path d="M18 18h10v10H18zM36 18h10v28H36zM18 36h10v10H18z" fill="#0b1220"/></svg>
+        </div>
+        <div class="brand-text">
+          <strong data-i18n="app.title">HyperVault</strong>
+          <span data-i18n="app.subtitle">Hyper-V Backup Console</span>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a href="#dashboard" class="nav-item" data-route="dashboard">
+          <span class="nav-ico">▣</span><span data-i18n="nav.dashboard">Dashboard</span>
+        </a>
+        <a href="#hosts" class="nav-item" data-route="hosts">
+          <span class="nav-ico">🖥</span><span data-i18n="nav.hosts">Hosts</span>
+        </a>
+        <a href="#vms" class="nav-item" data-route="vms">
+          <span class="nav-ico">◈</span><span data-i18n="nav.vms">Virtual Machines</span>
+        </a>
+        <a href="#storages" class="nav-item" data-route="storages">
+          <span class="nav-ico">⛁</span><span data-i18n="nav.storages">Storages</span>
+        </a>
+        <a href="#jobs" class="nav-item" data-route="jobs">
+          <span class="nav-ico">⏱</span><span data-i18n="nav.jobs">Jobs</span>
+        </a>
+        <a href="#backups" class="nav-item" data-route="backups">
+          <span class="nav-ico">↯</span><span data-i18n="nav.backups">Backups</span>
+        </a>
+        <a href="#verifications" class="nav-item" data-route="verifications">
+          <span class="nav-ico">✓</span><span data-i18n="nav.verifications">Verifications</span>
+        </a>
+        <a href="#restores" class="nav-item" data-route="restores">
+          <span class="nav-ico">⟲</span><span data-i18n="nav.restores">Restores</span>
+        </a>
+        <a href="#settings" class="nav-item" data-route="settings">
+          <span class="nav-ico">⚙</span><span data-i18n="nav.settings">Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="user-chip" id="userChip">
+          <span class="user-avatar" id="userAvatar">?</span>
+          <span class="user-meta">
+            <strong id="userName">—</strong>
+            <span id="userRole" class="user-role">—</span>
+          </span>
+          <button class="icon-btn" id="logoutBtn" title="Logout" data-i18n-ph="auth.logout">⎋</button>
+        </div>
+        <label class="lang-switch">
+          <span class="lang-label" data-i18n="common.language">Language</span>
+          <div class="seg" id="langSeg">
+            <button type="button" data-lang="en">EN</button>
+            <button type="button" data-lang="pt">PT</button>
+          </div>
+        </label>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="pageTitle" class="page-title">—</h1>
+        <div class="topbar-actions" id="topbarActions"></div>
+      </header>
+
+      <section id="view" class="view">
+        <div class="loader"><span class="spinner"></span> <span data-i18n="common.loading">Loading…</span></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- modal -->
+  <div id="modalRoot" class="modal-root hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3 id="modalTitle">—</h3>
+        <button class="icon-btn" data-close aria-label="close">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot" id="modalFoot"></div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="js/i18n.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
