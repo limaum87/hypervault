@@ -60,7 +60,11 @@ public record JobCreateDto(
     int VmId,
     int StorageId,
     string Type,
-    string CronSchedule,
+    string ScheduleType,   // daily | weekly | monthly | manual
+    string ScheduleTime,   // "HH:mm" in the job's TZ
+    string ScheduleWeekdays, // CSV "0..6" (0=Sun), for weekly
+    int? ScheduleDayOfMonth, // 1..31, for monthly
+    string TimeZone,       // IANA id, e.g. "America/Sao_Paulo"
     int RetentionDays,
     bool Enabled);
 
@@ -74,7 +78,14 @@ public record JobViewDto(
     int StorageId,
     string StorageName,
     string Type,
+    string ScheduleType,
+    string ScheduleTime,
+    string ScheduleWeekdays,
+    int? ScheduleDayOfMonth,
+    string TimeZone,
     string CronSchedule,
+    string ScheduleLabel,
+    string NextRunLabel,
     int RetentionDays,
     bool Enabled,
     DateTimeOffset? LastRunAt,

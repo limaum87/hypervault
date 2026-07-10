@@ -54,7 +54,15 @@ public class SchedulerWorker : BackgroundService
         var enabled = await db.Jobs.Where(j => j.Enabled).ToListAsync(stop);
         foreach (var job in enabled)
         {
-            var next = CronNextRun.Next(job.CronSchedule, job.LastRunAt ?? now);
+            // Manual jobs never auto-fire.
+            if (string.IsNullOrWhiteSpace(job.CronSchedule) ||
+                string.Equals(job.ScheduleType, ScheduleTypes.Manual, StringComparison.OrdinalIgnoreCase))
+            {
+                if (job.NextRunAt != null) job.NextRunAt = null;
+                continue;
+            }
+            var tz = ScheduleBuilder.ResolveTimeZone(job.TimeZone);
+            var next = CronNextRun.Next(job.CronSchedule, job.LastRunAt ?? now, tz);
             if (next != job.NextRunAt)
             {
                 job.NextRunAt = next;
@@ -82,7 +90,8 @@ public static class SchedulerFire
         };
         db.BackupRuns.Add(run);
         job.LastRunAt = now;
-        job.NextRunAt = CronNextRun.Next(job.CronSchedule, now);
+        var tz = ScheduleBuilder.ResolveTimeZone(job.TimeZone);
+        job.NextRunAt = CronNextRun.Next(job.CronSchedule, now, tz);
         await db.SaveChangesAsync(ct);
         queue.Enqueue(new BackupJobRequest(run.Id));
         return run;

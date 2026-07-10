@@ -73,6 +73,14 @@ public static class JobTypes
     public const string Incremental = "incremental";
 }
 
+public static class ScheduleTypes
+{
+    public const string Manual = "manual";
+    public const string Daily = "daily";
+    public const string Weekly = "weekly";
+    public const string Monthly = "monthly";
+}
+
 public static class CronPresets
 {
     public const string DailyMidnight = "0 0 * * *";
@@ -91,8 +99,21 @@ public class BackupJob
     public int StorageId { get; set; }
     public StorageTarget? Storage { get; set; }
     public string Type { get; set; } = JobTypes.Full; // full | incremental
-    /// <summary>Quartz-style cron expression. Empty means manual execution only.</summary>
+
+    // --- Friendly scheduling (drives CronSchedule below) ---
+    /// <summary>daily | weekly | monthly | manual</summary>
+    public string ScheduleType { get; set; } = ScheduleTypes.Manual;
+    /// <summary>Time in the job's timezone, 24h "HH:mm" (e.g. "10:50").</summary>
+    public string ScheduleTime { get; set; } = "00:00";
+    /// <summary>CSV of weekday numbers (0=Sun..6=Sat), for weekly.</summary>
+    public string ScheduleWeekdays { get; set; } = "";
+    /// <summary>Day of month (1-31) for monthly.</summary>
+    public int? ScheduleDayOfMonth { get; set; }
+    /// <summary>IANA timezone id (e.g. "America/Sao_Paulo"). Defaults to UTC.</summary>
+    public string TimeZone { get; set; } = "UTC";
+    /// <summary>Derived 5-field cron expression (always in ScheduleType's TZ). Empty = manual only.</summary>
     public string CronSchedule { get; set; } = CronPresets.Disabled;
+
     public int RetentionDays { get; set; } = 7;
     public bool Enabled { get; set; } = true;
     public DateTimeOffset? LastRunAt { get; set; }

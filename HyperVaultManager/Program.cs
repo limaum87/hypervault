@@ -114,6 +114,9 @@ using (var scope = app.Services.CreateScope())
         await db.SaveChangesAsync();
         app.Logger.LogWarning("Seeded default admin user 'admin' with password 'admin'. CHANGE IT IMMEDIATELY from Settings.");
     }
+
+    // Add new scheduling columns to the Jobs table if missing (existing DBs).
+    EnsureJobsScheduleColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
 }
 
 static async Task WriteAuthStatusAsync(HttpContext ctx, int code, string errorCode, string message)
@@ -122,6 +125,49 @@ static async Task WriteAuthStatusAsync(HttpContext ctx, int code, string errorCo
     ctx.Response.StatusCode = code;
     ctx.Response.ContentType = "application/json";
     await ctx.Response.WriteAsJsonAsync(new ApiError(errorCode, message, ctx.TraceIdentifier));
+}
+
+// SQLite doesn't support ADD COLUMN IF NOT EXISTS, so check PRAGMA table_info first.
+static void EnsureJobsScheduleColumns(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
+{
+    var existing = db.Database.SqlQueryRaw<string>(
+            "SELECT name FROM pragma_table_info('Jobs')")
+        .ToHashSet();
+
+    var add = new (string Col, string Ddl)[]
+    {
+        ("ScheduleType", "TEXT NOT NULL DEFAULT 'manual'"),
+        ("ScheduleTime", "TEXT NOT NULL DEFAULT '00:00'"),
+        ("ScheduleWeekdays", "TEXT NOT NULL DEFAULT ''"),
+        ("ScheduleDayOfMonth", "INTEGER NULL"),
+        ("TimeZone", "TEXT NOT NULL DEFAULT 'UTC'")
+    };
+
+    foreach (var (col, ddl) in add)
+    {
+        if (!existing.Contains(col))
+        {
+            db.Database.ExecuteSqlRaw($"ALTER TABLE Jobs ADD COLUMN \"{col}\" {ddl};");
+            logger.LogInformation("Added column Jobs.{Col}", col);
+        }
+    }
+}
+
+// Applies the friendly scheduling fields to a job, derives the cron and the
+// next-run time (in the job's own timezone).
+static void ApplySchedule(BackupJob job, JobCreateDto dto)
+{
+    job.ScheduleType = string.IsNullOrWhiteSpace(dto.ScheduleType) ? ScheduleTypes.Manual : dto.ScheduleType;
+    job.ScheduleTime = string.IsNullOrWhiteSpace(dto.ScheduleTime) ? "00:00" : dto.ScheduleTime;
+    job.ScheduleWeekdays = dto.ScheduleWeekdays ?? "";
+    job.ScheduleDayOfMonth = dto.ScheduleDayOfMonth;
+    var tzId = ScheduleBuilder.IsValidTimeZone(dto.TimeZone) ? dto.TimeZone.Trim() : "UTC";
+    job.TimeZone = tzId;
+    job.CronSchedule = ScheduleBuilder.BuildCron(job.ScheduleType, job.ScheduleTime, job.ScheduleWeekdays, job.ScheduleDayOfMonth);
+    var tz = ScheduleBuilder.ResolveTimeZone(tzId);
+    job.NextRunAt = job.Enabled
+        ? CronNextRun.Next(job.CronSchedule, DateTimeOffset.UtcNow, tz)
+        : null;
 }
 
 // ---- error handling ----
@@ -481,10 +527,9 @@ api.MapPost("/jobs", async (JobCreateDto dto, ManagerDbContext db) =>
         Name = dto.Name.Trim(),
         HostId = dto.HostId, VmId = dto.VmId, StorageId = dto.StorageId,
         Type = dto.Type == JobTypes.Incremental ? JobTypes.Incremental : JobTypes.Full,
-        CronSchedule = dto.CronSchedule ?? CronPresets.Disabled,
-        RetentionDays = dto.RetentionDays, Enabled = dto.Enabled,
-        NextRunAt = CronNextRun.Next(dto.CronSchedule, DateTimeOffset.UtcNow)
+        RetentionDays = dto.RetentionDays, Enabled = dto.Enabled
     };
+    ApplySchedule(job, dto);
     db.Jobs.Add(job); await db.SaveChangesAsync();
     await db.Entry(job).Reference(j => j.Host).LoadAsync();
     await db.Entry(job).Reference(j => j.Vm).LoadAsync();
@@ -498,9 +543,8 @@ api.MapPut("/jobs/{id:int}", async (int id, JobCreateDto dto, ManagerDbContext d
         ?? throw new InvalidOperationException($"Job {id} not found");
     job.Name = dto.Name.Trim(); job.HostId = dto.HostId; job.VmId = dto.VmId;
     job.StorageId = dto.StorageId; job.Type = dto.Type;
-    job.CronSchedule = dto.CronSchedule ?? CronPresets.Disabled;
     job.RetentionDays = dto.RetentionDays; job.Enabled = dto.Enabled;
-    job.NextRunAt = job.Enabled ? CronNextRun.Next(job.CronSchedule, DateTimeOffset.UtcNow) : null;
+    ApplySchedule(job, dto);
     await db.SaveChangesAsync();
     return Results.Ok();
 });
@@ -695,8 +739,29 @@ static class Map
 
     public static JobViewDto Job(BackupJob j) => new(
         j.Id, j.Name, j.HostId, j.Host?.Name ?? "", j.VmId, j.Vm?.Name ?? j.Vm?.ExternalId ?? "",
-        j.StorageId, j.Storage?.Name ?? "", j.Type, j.CronSchedule, j.RetentionDays, j.Enabled,
-        j.LastRunAt, j.NextRunAt, j.CreatedAt);
+        j.StorageId, j.Storage?.Name ?? "", j.Type,
+        j.ScheduleType, j.ScheduleTime, j.ScheduleWeekdays, j.ScheduleDayOfMonth, j.TimeZone, j.CronSchedule,
+        ScheduleLabel(j), NextRunLabel(j),
+        j.RetentionDays, j.Enabled, j.LastRunAt, j.NextRunAt, j.CreatedAt);
+
+    public static string ScheduleLabel(BackupJob j)
+    {
+        var tz = string.IsNullOrWhiteSpace(j.TimeZone) ? "UTC" : j.TimeZone;
+        var time = string.IsNullOrWhiteSpace(j.ScheduleTime) ? "00:00" : j.ScheduleTime;
+        return j.ScheduleType?.ToLowerInvariant() switch
+        {
+            ScheduleTypes.Daily => $"Daily @ {time} ({tz})",
+            ScheduleTypes.Weekly => $"Weekly @ {time} ({tz})",
+            ScheduleTypes.Monthly => $"Monthly @ {time} ({tz})",
+            _ => "Manual only"
+        };
+    }
+
+    public static string NextRunLabel(BackupJob j)
+    {
+        if (!j.Enabled || string.IsNullOrWhiteSpace(j.CronSchedule) || j.NextRunAt is null) return "Manual";
+        return j.NextRunAt.Value.ToUniversalTime().ToString("u");
+    }
 
     public static BackupRunViewDto BackupRun(BackupRun r) => new(
         r.Id, r.JobId, r.Job?.Name, r.HostId, r.Host?.Name ?? "", r.VmId, r.Vm?.Name ?? r.Vm?.ExternalId ?? "",

@@ -406,17 +406,19 @@ async function viewJobs() {
       <th data-i18n="jobs.name">${t("jobs.name")}</th>
       <th data-i18n="jobs.vm">${t("jobs.vm")}</th>
       <th data-i18n="jobs.type">${t("jobs.type")}</th>
-      <th data-i18n="jobs.schedule_cron">${t("jobs.schedule_cron")}</th>
+      <th data-i18n="jobs.schedule">${t("jobs.schedule")}</th>
+      <th data-i18n="jobs.next_run">${t("jobs.next_run")}</th>
       <th data-i18n="jobs.last_run">${t("jobs.last_run")}</th>
-      <th data-i18n="common.enabled">${""}</th>
+      <th data-i18n="common.enabled">${t("common.enabled")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!jobs.length) html += emptyRow(7, "⏱", "jobs.empty");
+  if (!jobs.length) html += emptyRow(8, "⏰", "jobs.empty");
   else html += jobs.map(j => `<tr>
     <td><strong>${esc(j.name)}</strong><div class="cell-mono muted">${esc(j.vmName)} @ ${esc(j.hostName)}</div></td>
     <td class="cell-dim">${esc(j.storageName)}</td>
     <td>${esc(t(`jobs.types.${j.type}`))}</td>
-    <td class="cell-mono">${j.cronSchedule ? esc(j.cronSchedule) : `<span class="muted">${t("jobs.manual_only")}</span>`}</td>
+    <td><span class="schedule-chip">${esc(j.scheduleLabel || t("jobs.manual_only"))}</span>${j.scheduleType === "weekly" && j.scheduleWeekdays ? `<div class="cell-mono muted">${esc(weekdaysLabel(j.scheduleWeekdays))}</div>` : ""}</td>
+    <td class="cell-mono">${(j.scheduleType === "manual" || !j.enabled) ? `<span class="muted">—</span>` : fmtInTz(j.nextRunAt, j.timeZone)}</td>
     <td class="cell-mono">${fmtRelative(j.lastRunAt)}</td>
     <td>${j.enabled ? `<span class="badge online"><span class="dot"></span>on</span>` : `<span class="badge offline"><span class="dot"></span>off</span>`}</td>
     <td class="t-actions">
@@ -432,6 +434,13 @@ async function jobForm(id = null) {
   const [hosts, vms, storages] = await Promise.all([api.get("/api/hosts"), api.get("/api/vms"), api.get("/api/storages")]);
   let j = {};
   if (id) j = await api.get("/api/jobs").then(l => l.find(x => x.id === id));
+  const detectedTz = detectTimeZone();
+  const tz = j.timeZone || detectedTz;
+  const tzOpts = commonTimeZones(detectedTz);
+  const st = (j.scheduleType || "manual");
+  const weekdays = (j.scheduleWeekdays || "").split(",").filter(Boolean).map(Number);
+  const dayOpts = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${j.scheduleDayOfMonth === (i + 1) ? "selected" : ""}>${i + 1}</option>`).join("");
+  const wdNames = [t("days.sun"), t("days.mon"), t("days.tue"), t("days.wed"), t("days.thu"), t("days.fri"), t("days.sat")];
   const body = `<form id="jf" class="form-grid">
     <div class="field full"><label data-i18n="jobs.name">${t("jobs.name")}</label><input name="name" value="${esc(j.name || "")}" required /></div>
     <div class="field"><label data-i18n="jobs.host">${t("jobs.host")}</label><select name="hostId" id="jfHost" onchange="filterVmOptions()" required>
@@ -443,14 +452,104 @@ async function jobForm(id = null) {
     <div class="field"><label data-i18n="jobs.type">${t("jobs.type")}</label><select name="type">
       <option value="full" ${j.type === "full" ? "selected" : ""}>${t("jobs.types.full")}</option>
       <option value="incremental" ${j.type === "incremental" ? "selected" : ""}>${t("jobs.types.incremental")}</option></select></div>
-    <div class="field"><label data-i18n="jobs.schedule_cron">${t("jobs.schedule_cron")}</label><input name="cronSchedule" value="${esc(j.cronSchedule || "")}" placeholder="0 0 * * *" /></div>
-    <div class="field"><label data-i18n="jobs.retention_days">${t("jobs.retention_days")}</label><input name="retentionDays" type="number" value="${j.retentionDays ?? 7}" /></div>
+    <div class="field full divider"></div>
+    <div class="field full"><label data-i18n="jobs.schedule">${t("jobs.schedule")}</label><select name="scheduleType" id="jfScheduleType" onchange="toggleScheduleFields()">
+      <option value="manual" ${st === "manual" ? "selected" : ""}>${t("jobs.schedule.manual")}</option>
+      <option value="daily" ${st === "daily" ? "selected" : ""}>${t("jobs.schedule.daily")}</option>
+      <option value="weekly" ${st === "weekly" ? "selected" : ""}>${t("jobs.schedule.weekly")}</option>
+      <option value="monthly" ${st === "monthly" ? "selected" : ""}>${t("jobs.schedule.monthly")}</option>
+    </select>
+      <span class="hint" id="jfNextPreview" style="margin-top:6px"></span></div>
+    <div class="field jfSched jfTime"><label data-i18n="jobs.schedule.time">${t("jobs.schedule.time")}</label><input name="scheduleTime" type="time" value="${esc(j.scheduleTime || "12:00")}" required onchange="updateNextPreview()" /></div>
+    <div class="field jfSched jfTz"><label data-i18n="jobs.schedule.timezone">${t("jobs.schedule.timezone")}</label><select name="timeZone" onchange="updateNextPreview()">${tzOpts.map(o => `<option value="${esc(o.id)}" ${tz === o.id ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select></div>
+    <div class="field full jfSched jfWeekly">
+      <label data-i18n="jobs.schedule.weekdays">${t("jobs.schedule.weekdays")}</label>
+      <div class="weekday-chips" id="jfWeekdays">
+        ${wdNames.map((n, i) => `<label class="wd-chip"><input type="checkbox" value="${i}" ${weekdays.includes(i) ? "checked" : ""} onchange="updateNextPreview()"/><span>${esc(n)}</span></label>`).join("")}
+      </div>
+    </div>
+    <div class="field jfSched jfMonthly"><label data-i18n="jobs.schedule.day_of_month">${t("jobs.schedule.day_of_month")}</label><select name="scheduleDayOfMonth" onchange="updateNextPreview()">${dayOpts}</select></div>
+
+    <div class="field full divider"></div>
+    <div class="field"><label data-i18n="jobs.retention_days">${t("jobs.retention_days")}</label><input name="retentionDays" type="number" min="1" value="${j.retentionDays ?? 7}" /></div>
     <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="enabled" ${j.enabled !== false ? "checked" : ""}/> <span data-i18n="jobs.enabled">${t("jobs.enabled")}</span></label></div>
   </form>`;
   const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
     <button class="btn primary" onclick="saveJob(${id || "null"})"><span data-i18n="common.save">${t("common.save")}</span></button>`;
   openModal("jobs.add", body, foot);
   filterVmOptions();
+  toggleScheduleFields();
+  updateNextPreview();
+}
+
+function toggleScheduleFields() {
+  const st = $("#jfScheduleType").value;
+  $$(".jfSched").forEach(el => el.style.display = "none");
+  if (st === "manual") return;
+  $$(".jfTime, .jfTz").forEach(el => el.style.display = "");
+  if (st === "weekly") $(".jfWeekly").style.display = "";
+  if (st === "monthly") $(".jfMonthly").style.display = "";
+}
+
+function selectedWeekdays() { return $$("#jfWeekdays input:checked").map(c => Number(c.value)); }
+
+// Lightweight next-run preview computed client-side (UX hint).
+function computeNextRun(st, time, tzId, weekdays, dayOfMonth) {
+  if (st === "manual") return null;
+  const [hh, mm] = (time || "00:00").split(":").map(Number);
+  const now = new Date();
+  const ref = tzId ? new Date(now.toLocaleString("en-US", { timeZone: tzId })) : now;
+  for (let i = 0; i < 366; i++) {
+    const d = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate() + i, hh || 0, mm || 0, 0, 0);
+    if (d <= ref) continue;
+    if (st === "daily") return d;
+    if (st === "weekly" && weekdays.includes(d.getDay())) return d;
+    if (st === "monthly" && d.getDate() === Number(dayOfMonth)) return d;
+  }
+  return null;
+}
+
+function updateNextPreview() {
+  const span = $("#jfNextPreview"); if (!span) return;
+  const st = $("#jfScheduleType").value;
+  if (st === "manual") { span.textContent = ""; return; }
+  const time = $("#jf input[name=scheduleTime]").value;
+  const tzId = $("#jf select[name=timeZone]").value;
+  const next = computeNextRun(st, time, tzId, selectedWeekdays(), Number($("#jf select[name=scheduleDayOfMonth]").value));
+  if (!next) { span.textContent = ""; return; }
+  try {
+    const lbl = next.toLocaleString(currentLocale(), { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: tzId || undefined }) + (tzId ? ` (${tzId})` : "");
+    span.textContent = `${t("jobs.next_run")}: ${lbl}`;
+    span.style.color = "var(--accent-2)";
+  } catch { span.textContent = ""; }
+}
+
+function detectTimeZone() {
+  try { const id = Intl.DateTimeFormat().resolvedOptions().timeZone; if (id) return id; } catch {}
+  return "UTC";
+}
+
+function commonTimeZones(detected) {
+  const list = [
+    "America/Sao_Paulo", "America/New_York", "America/Chicago", "America/Los_Angeles",
+    "America/Toronto", "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid",
+    "Atlantic/Canary", "Asia/Tokyo", "Asia/Dubai", "Australia/Sydney", "UTC"
+  ];
+  if (detected && !list.includes(detected)) list.unshift(detected);
+  return list.map(id => ({ id, label: id === detected ? `${id} — ${t("jobs.schedule.detected")}` : id }));
+}
+
+function weekdaysLabel(csv) {
+  const names = [t("days.sun"), t("days.mon"), t("days.tue"), t("days.wed"), t("days.thu"), t("days.fri"), t("days.sat")];
+  return String(csv || "").split(",").filter(Boolean).map(Number).sort().map(d => names[d] || d).join(", ");
+}
+
+function fmtInTz(iso, tzId) {
+  if (!iso) return `<span class="muted">${t("common.never")}</span>`;
+  const d = new Date(iso); if (isNaN(d)) return esc(iso);
+  try {
+    return d.toLocaleString(currentLocale(), { dateStyle: "short", timeStyle: "short", timeZone: tzId || undefined }) + (tzId ? ` <span class="muted">(${tzId})</span>` : "");
+  } catch { return d.toLocaleString(currentLocale(), { dateStyle: "short", timeStyle: "short" }); }
 }
 function filterVmOptions() {
   const host = $("#jfHost").value;
@@ -463,10 +562,16 @@ function filterVmOptions() {
 }
 async function saveJob(id) {
   const f = $("#jf"); const fd = new FormData(f);
+  const scheduleType = fd.get("scheduleType") || "manual";
   const payload = {
     name: fd.get("name"), hostId: Number(fd.get("hostId")), vmId: Number(fd.get("vmId")),
     storageId: Number(fd.get("storageId")), type: fd.get("type"),
-    cronSchedule: fd.get("cronSchedule") || "", retentionDays: Number(fd.get("retentionDays")),
+    scheduleType,
+    scheduleTime: fd.get("scheduleTime") || "00:00",
+    scheduleWeekdays: scheduleType === "weekly" ? selectedWeekdays().join(",") : "",
+    scheduleDayOfMonth: scheduleType === "monthly" ? Number(fd.get("scheduleDayOfMonth")) : null,
+    timeZone: fd.get("timeZone") || "UTC",
+    retentionDays: Number(fd.get("retentionDays")),
     enabled: f.enabled.checked
   };
   try {

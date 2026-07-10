@@ -4,12 +4,19 @@ namespace HyperVaultManager.Services;
 
 /// <summary>
 /// Minimal 5-field cron (minute hour day-of-month month day-of-week) "next run"
-/// calculator supporting '*', 'a', 'a-b', 'a,b,c' and '*/n'. Good enough for
-/// the MVP scheduling needs (daily/weekly jobs).
+/// calculator supporting '*', 'a', 'a-b', 'a,b,c' and '*/n'.
+///
+/// The cron is evaluated in the job's own <see cref="TimeZoneInfo"/> (defaults
+/// to UTC): a user typing "10:50" in America/Sao_Paulo gets exactly 10:50 there.
+///
+/// The search runs in the job's LOCAL time (not UTC) so that timezone offsets
+/// don't make the iteration "land" on the wrong local day, and converts the
+/// matched local instant to UTC only at the end. When a coarser field fails to
+/// match, finer fields are reset to 0 (classic cron-next behavior).
 /// </summary>
 public static class CronNextRun
 {
-    public static DateTimeOffset? Next(string? cron, DateTimeOffset after)
+    public static DateTimeOffset? Next(string? cron, DateTimeOffset after, TimeZoneInfo? tz = null)
     {
         if (string.IsNullOrWhiteSpace(cron)) return null;
         var parts = cron.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -19,45 +26,52 @@ public static class CronNextRun
         try { fields = parts.Select(ParseField).ToArray(); }
         catch { return null; }
 
-        var from = after.UtcDateTime.AddSeconds(1).TrimToMinute();
-        var cur = from;
-        // cap the search to ~1 year to avoid infinite loops on impossible exprs
-        var limit = from.AddYears(1);
-        while (cur <= limit)
+        tz ??= TimeZoneInfo.Utc;
+
+        // Iterate candidate instants expressed in the JOB's local timezone.
+        var localAfter = TimeZoneInfo.ConvertTime(after, tz);
+        var c = new DateTime(localAfter.Year, localAfter.Month, localAfter.Day,
+                             localAfter.Hour, localAfter.Minute, 0, DateTimeKind.Unspecified).AddMinutes(1);
+        var limit = localAfter.AddYears(1);
+
+        while (c <= limit)
         {
-            if (!fields[3].Contains(cur.Month)) { cur = cur.AddMonthsToFirstAllowed(fields[3]); continue; }
-            if (!fields[2].Contains(cur.Day)) { cur = cur.AddDaysToFirstAllowed(fields[2], cur.Month, cur.Year); continue; }
-            if (!fields[4].Contains((int)cur.DayOfWeek)) { cur = cur.AddDays(1).TrimToMinute(); continue; }
-            if (!fields[1].Contains(cur.Hour)) { cur = cur.AddHours(1).TrimToMinute(); continue; }
-            if (!fields[0].Contains(cur.Minute)) { cur = cur.AddMinutes(1); continue; }
-            return new DateTimeOffset(cur, TimeSpan.Zero);
+            if (!fields[3].Contains(c.Month)) { c = FirstOfNextMonth(c); continue; }
+            if (!fields[4].Contains((int)c.DayOfWeek) || !fields[2].Contains(c.Day)) { c = StartOfNextLocalDay(c); continue; }
+            if (!fields[1].Contains(c.Hour)) { c = StartOfNextLocalHour(c); continue; }
+            if (!fields[0].Contains(c.Minute)) { c = c.AddMinutes(1); continue; }
+
+            // All fields match in local time -> convert this local instant to UTC.
+            try
+            {
+                var utc = TimeZoneInfo.ConvertTimeToUtc(c, tz);
+                return new DateTimeOffset(utc, TimeSpan.Zero);
+            }
+            catch (ArgumentException)
+            {
+                // Skipped/ambiguous local time during a DST transition: nudge forward.
+                c = c.AddMinutes(30);
+            }
         }
         return null;
     }
 
-    private static DateTime TrimToMinute(this DateTime d) => new(d.Year, d.Month, d.Day, d.Hour, d.Minute, 0, DateTimeKind.Utc);
-
-    private static DateTime AddMonthsToFirstAllowed(this DateTime cur, int[] allowedMonths)
+    private static DateTime StartOfNextLocalDay(DateTime cur)
     {
-        var next = cur;
-        for (var i = 0; i < 24; i++)
-        {
-            next = new DateTime(next.Year, next.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
-            if (allowedMonths.Contains(next.Month)) return next;
-        }
-        return cur.AddYears(1);
+        var n = cur.AddDays(1);
+        return new DateTime(n.Year, n.Month, n.Day, 0, 0, 0, DateTimeKind.Unspecified);
     }
 
-    private static DateTime AddDaysToFirstAllowed(this DateTime cur, int[] allowedDays, int month, int year)
+    private static DateTime StartOfNextLocalHour(DateTime cur)
     {
-        var next = cur.AddDays(1);
-        var daysInMonth = DateTime.DaysInMonth(next.Year, next.Month);
-        for (var i = 0; i < 366; i++)
-        {
-            if (allowedDays.Contains(next.Day)) return new DateTime(next.Year, next.Month, next.Day, 0, 0, 0, DateTimeKind.Utc);
-            next = next.AddDays(1);
-        }
-        return cur.AddMonths(1);
+        var n = cur.AddHours(1);
+        return new DateTime(n.Year, n.Month, n.Day, n.Hour, 0, 0, DateTimeKind.Unspecified);
+    }
+
+    private static DateTime FirstOfNextMonth(DateTime cur)
+    {
+        var firstOfThis = new DateTime(cur.Year, cur.Month, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        return firstOfThis.AddMonths(1);
     }
 
     private static int[] ParseField(string field, int index)
