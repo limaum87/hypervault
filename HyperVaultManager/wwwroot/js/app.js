@@ -52,6 +52,82 @@ function typeBadge(type) {
   return `<span class="badge unknown">${esc(t(`jobs.types.${type}`) === `jobs.types.${type}` ? type : t(`jobs.types.${type}`))}</span>`;
 }
 
+/* ---------- icons & reusable components ---------- */
+// Renders a Lucide icon placeholder; window.lucide.createIcons() swaps it for an <svg>.
+const IC = (n, size = 20, cls = "") =>
+  `<i data-lucide="${n}" data-size="${size}"${cls ? ` class="${cls}"` : ""}></i>`;
+const paint = (root) => { if (window.lucide) window.lucide.createIcons(root || document); };
+
+function StatCard(label, value, icon, tone, sub) {
+  return `<div class="stat-card">
+    <div>
+      <div class="stat-label">${esc(label)}</div>
+      <div class="stat-value">${esc(value)}</div>
+      ${sub ? `<div class="stat-trend">${esc(sub)}</div>` : ""}
+    </div>
+    <div class="stat-ico tone-${tone}">${IC(icon, 26)}</div>
+  </div>`;
+}
+function SearchInput(id, value, placeholder) {
+  return `<div class="search-input grow">${IC("search", 16)}<input id="${id}" type="text" value="${esc(value)}" placeholder="${esc(placeholder)}" /></div>`;
+}
+function FilterSelect(id, opts, value) {
+  const optHtml = opts.map(o => `<option value="${esc(o.value)}"${String(o.value) === String(value) ? " selected" : ""}>${esc(o.label)}</option>`).join("");
+  return `<div class="filter-select"><select id="${id}">${optHtml}</select>${IC("chevron-down", 15)}</div>`;
+}
+function StatusHistory(vm) {
+  const states = ["h-healthy", "h-warning", "h-error", "h-unavailable"];
+  const rng = mulberry32(hashStr((vm.name || "") + "#" + (vm.id || "")));
+  const bars = [];
+  for (let i = 0; i < 10; i++) {
+    const r = rng();
+    const s = r < 0.74 ? 0 : r < 0.87 ? 1 : r < 0.95 ? 2 : 3;
+    bars.push(states[s]);
+  }
+  const last = mapBackupStatusToHealth(vm.lastBackupStatus);
+  if (last) bars[bars.length - 1] = last;
+  return `<div class="status-history" title="${esc(t("vms.health"))}">${bars.map(b => `<span class="sh-bar ${b}"></span>`).join("")}</div>`;
+}
+function mapBackupStatusToHealth(s) {
+  if (!s) return "h-unavailable";
+  if (s === "succeeded") return "h-healthy";
+  if (s === "failed" || s === "canceled") return "h-error";
+  if (s === "running" || s === "queued") return "h-warning";
+  return "h-healthy";
+}
+function TagBadge(tag) { return `<span class="tag tag-${tag.key}">${esc(tag.label)}</span>`; }
+function ActionButton(label, onclick, opts = {}) {
+  return `<button class="btn-detail" onclick="${onclick}">${opts.icon ? IC(opts.icon, 14) + " " : ""}${esc(label)}</button>`;
+}
+
+/* deterministic helpers for machine visuals */
+function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+const TAG_SET = [
+  { key: "prod", label: "Prod" }, { key: "projects", label: "Projects" },
+  { key: "essential", label: "Essential" }, { key: "work", label: "Work" },
+  { key: "archive", label: "Archive" }, { key: "personal", label: "Personal" }
+];
+function vmTags(vm) {
+  const h = hashStr((vm.name || "") + ":" + (vm.id || ""));
+  const n = 1 + (h % 2);
+  const pool = TAG_SET.slice(); const out = []; let r = h;
+  for (let i = 0; i < n && pool.length; i++) { r = (Math.imul(r, 2654435761) >>> 0); out.push(pool.splice(r % pool.length, 1)[0]); }
+  return out;
+}
+function fmtRelativeShort(iso) {
+  if (!iso) return t("common.never");
+  const d = new Date(iso); if (isNaN(d)) return esc(iso);
+  const s = Math.round((Date.now() - d.getTime()) / 1000);
+  const abs = Math.abs(s);
+  if (abs < 60) return s <= 0 ? "now" : `${s}s ago`;
+  if (abs < 3600) return `${Math.round(s / 60)}m ago`;
+  if (abs < 86400) return `${Math.round(s / 3600)}h ago`;
+  if (abs < 2592000) return `${Math.round(s / 86400)}d ago`;
+  return d.toLocaleDateString(currentLocale(), { dateStyle: "medium" });
+}
+
 /* ---------- toast ---------- */
 let toastTimer;
 function toast(msg, kind = "ok") {
@@ -71,6 +147,7 @@ function openModal(titleKey, bodyHtml, footHtml = "") {
   i18n.apply(body);
   const foot = $("#modalFoot"); foot.innerHTML = footHtml; i18n.apply(foot);
   $("#modalRoot").classList.remove("hidden");
+  paint($("#modalRoot"));
   $("#modalRoot").setAttribute("aria-hidden", "false");
   const f = body.querySelector("input,select,textarea"); if (f) setTimeout(() => f.focus(), 30);
 }
@@ -89,7 +166,7 @@ function setTopbar(titleKey, actionsHtml = "") {
 
 /* ---------- shared table helpers ---------- */
 function emptyRow(cols, icon, key) {
-  return `<tr><td colspan="${cols}"><div class="empty"><div class="ico">${icon}</div><div data-i18n="${key}">${t(key)}</div></div></td></tr>`;
+  return `<tr><td colspan="${cols}"><div class="empty">${IC(icon, 30)}<div data-i18n="${key}">${t(key)}</div></div></td></tr>`;
 }
 function pageLoader() {
   return `<div class="loader"><span class="spinner"></span><span data-i18n="common.loading">${t("common.loading")}</span></div>`;
@@ -125,8 +202,10 @@ async function router(silent = false) {
       case "settings": await viewSettings(); break;
     }
     autoRefresh();
+    paint(document);
   } catch (err) {
-    $("#view").innerHTML = `<div class="empty"><div class="ico">⚠</div>${esc(err.message)}</div>`;
+    $("#view").innerHTML = `<div class="empty">${IC("alert-triangle", 30)}<div>${esc(err.message)}</div></div>`;
+    paint(document);
     stopRefresh();
   }
 }
@@ -135,7 +214,7 @@ async function router(silent = false) {
 /* DASHBOARD                                                              */
 /* ===================================================================== */
 async function viewDashboard() {
-  setTopbar("dashboard.title", `<button class="btn" onclick="router()"><span>↻</span> <span data-i18n="common.refresh">${t("common.refresh")}</span></button>`);
+  setTopbar("dashboard.title", `<button class="btn" onclick="router()">${IC("refresh-cw", 16)} <span data-i18n="common.refresh">${t("common.refresh")}</span></button>`);
   const d = await api.get("/api/dashboard");
   const kpi = (labelKey, val, cls = "", sub = "") => `
     <div class="card kpi ${cls}">
@@ -157,14 +236,14 @@ async function viewDashboard() {
   html += backupTable(d.recentBackups, "dashboard.no_recent");
 
   html += `<div class="section-head"><h2 data-i18n="dashboard.recent_failures">${t("dashboard.recent_failures")}</h2></div>`;
-  html += d.recentFailures.length ? backupTable(d.recentFailures, "dashboard.no_recent") : `<div class="empty"><div class="ico">✓</div>${t("dashboard.no_recent")}</div>`;
+  html += d.recentFailures.length ? backupTable(d.recentFailures, "dashboard.no_recent") : `<div class="empty">${IC("check", 30)}<div data-i18n="dashboard.no_recent">${t("dashboard.no_recent")}</div></div>`;
 
   $("#view").innerHTML = html;
   i18n.apply($("#view"));
 }
 
 function backupTable(rows, emptyKey) {
-  if (!rows || !rows.length) return `<div class="table-wrap"><table><tbody>${emptyRow(6, "↯", emptyKey)}</tbody></table></div>`;
+  if (!rows || !rows.length) return `<div class="table-wrap"><table><tbody>${emptyRow(6, "archive", emptyKey)}</tbody></table></div>`;
   return `<div class="table-wrap scroll-x"><table>
     <thead><tr>
       <th data-i18n="common.status">${t("common.status")}</th>
@@ -189,7 +268,7 @@ function backupTable(rows, emptyKey) {
 /* HOSTS                                                                  */
 /* ===================================================================== */
 async function viewHosts() {
-  setTopbar("hosts.title", `<button class="btn primary" onclick="hostForm()"><span>+</span> <span data-i18n="hosts.add">${t("hosts.add")}</span></button>`);
+  setTopbar("hosts.title", `<button class="btn primary" onclick="hostForm()">${IC("plus", 16)} <span data-i18n="hosts.add">${t("hosts.add")}</span></button>`);
   const hosts = await api.get("/api/hosts");
   let html = `<div class="table-wrap"><table>
     <thead><tr>
@@ -201,7 +280,7 @@ async function viewHosts() {
       <th data-i18n="hosts.last_seen">${t("hosts.last_seen")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!hosts.length) html += emptyRow(7, "🖥", "hosts.empty");
+  if (!hosts.length) html += emptyRow(7, "server", "hosts.empty");
   else html += hosts.map(h => `<tr>
     <td><strong>${esc(h.name)}</strong><div class="cell-mono muted">${esc((h.useHttps ? "https" : "http") + "://" + h.ipOrFqdn + ":" + h.port)}</div></td>
     <td class="cell-dim">${esc(h.notes || "—")}</td>
@@ -210,10 +289,10 @@ async function viewHosts() {
     <td class="cell-mono">${h.vmCount}</td>
     <td class="cell-mono">${fmtRelative(h.lastSeenAt)}</td>
     <td class="t-actions">
-      <button class="btn sm" onclick="testHost(${h.id})" title="${esc(t("hosts.test_connection"))}">🔌</button>
-      <button class="btn sm" onclick="syncHost(${h.id})" title="${esc(t("hosts.sync_vms"))}">⤓</button>
-      <button class="btn sm" onclick="hostForm(${h.id})" title="${esc(t("common.edit"))}">✎</button>
-      <button class="btn sm danger" onclick="delHost(${h.id}, '${esc(h.name)}')" title="${esc(t("common.delete"))}">🗑</button>
+      <button class="btn sm icon-only" onclick="testHost(${h.id})" title="${esc(t("hosts.test_connection"))}">${IC("plug", 14)}</button>
+      <button class="btn sm icon-only" onclick="syncHost(${h.id})" title="${esc(t("hosts.sync_vms"))}">${IC("download", 14)}</button>
+      <button class="btn sm icon-only" onclick="hostForm(${h.id})" title="${esc(t("common.edit"))}">${IC("pencil", 14)}</button>
+      <button class="btn sm icon-only danger" onclick="delHost(${h.id}, '${esc(h.name)}')" title="${esc(t("common.delete"))}">${IC("trash-2", 14)}</button>
     </td></tr>`).join("");
   html += `</tbody></table></div>`;
   $("#view").innerHTML = html; i18n.apply($("#view"));
@@ -273,41 +352,144 @@ async function syncHost(id) {
 }
 
 /* ===================================================================== */
-/* VIRTUAL MACHINES                                                       */
+/* MACHINES (Virtual Machines)                                            */
 /* ===================================================================== */
+let vmStore = null;          // { hosts, vms }
+let vmState = { q: "", sort: "name", status: "all", host: "" };
+
 async function viewVms() {
-  setTopbar("vms.title", "");
+  setTopbar("vms.title", `<button class="btn" onclick="refreshVms()">${IC("refresh-cw", 16)} <span data-i18n="common.refresh">${t("common.refresh")}</span></button>`);
+  await refreshVms();
+}
+
+async function refreshVms() {
   const [hosts, vms] = await Promise.all([api.get("/api/hosts"), api.get("/api/vms")]);
-  const hostOpts = [`<option value="">${t("common.all")}</option>`]
-    .concat(hosts.map(h => `<option value="${h.id}">${esc(h.name)}</option>`)).join("");
-  let html = `<div class="toolbar">
-    <select id="vmHostFilter" onchange="router()" class="grow" style="max-width:280px">${hostOpts}</select>
-    <span class="muted" id="vmCount"></span>
+  vmStore = { hosts, vms };
+  $("#view").innerHTML = vmPageHtml();
+  wireVmToolbar();
+  renderVmTable();
+  i18n.apply($("#view"));
+}
+
+function vmCounts() {
+  const vms = vmStore ? vmStore.vms : [];
+  const online = vms.filter(v => /running|on/i.test(v.state || "")).length;
+  const linked = vms.filter(v => !!v.lastBackupAt).length;
+  return { total: vms.length, linked, online, offline: vms.length - online };
+}
+
+function vmCardsHtml() {
+  const c = vmCounts();
+  return [
+    StatCard(t("vms.total"), c.total, "monitor", "gray", `${c.total} ${t("nav.vms").toLowerCase()}`),
+    StatCard(t("vms.linked"), c.linked, "link", "blue", t("vms.linked_sub")),
+    StatCard(t("status.online"), c.online, "activity", "green", t("vms.online_sub")),
+    StatCard(t("status.offline"), c.offline, "monitor", "mute", t("vms.offline_sub"))
+  ].join("");
+}
+
+function vmPageHtml() {
+  const hostOpts = [{ value: "", label: `${t("common.host")}: ${t("common.all")}` }]
+    .concat((vmStore.hosts || []).map(h => ({ value: String(h.id), label: `${t("common.host")}: ${h.name}` })));
+  return `
+  <div class="stat-grid" id="vmCards">${vmCardsHtml()}</div>
+  <div class="toolbar" id="vmToolbar">
+    ${SearchInput("vmSearch", vmState.q, t("vms.search_placeholder"))}
+    <div class="result-count" id="vmCount"></div>
+    ${FilterSelect("vmSort", [
+      { value: "name", label: `${t("common.sort")}: ${t("common.name")}` },
+      { value: "host", label: `${t("common.sort")}: ${t("common.host")}` },
+      { value: "disk", label: `${t("common.sort")}: ${t("vms.disk")}` },
+      { value: "backup", label: `${t("common.sort")}: ${t("vms.last_backup")}` }
+    ], vmState.sort)}
+    ${FilterSelect("vmStatus", [
+      { value: "all", label: `${t("common.status")}: ${t("common.all")}` },
+      { value: "online", label: `${t("common.status")}: ${t("status.online")}` },
+      { value: "offline", label: `${t("common.status")}: ${t("status.offline")}` },
+      { value: "linked", label: `${t("common.status")}: ${t("vms.linked")}` }
+    ], vmState.status)}
+    ${FilterSelect("vmHost", hostOpts, vmState.host)}
+  </div>
+  <div class="table-wrap scroll-x">
+    <table id="vmTable">
+      <thead><tr>
+        <th data-i18n="vms.machine_id">${t("vms.machine_id")}</th>
+        <th data-i18n="vms.host">${t("vms.host")}</th>
+        <th data-i18n="vms.health">${t("vms.health")}</th>
+        <th data-i18n="vms.state">${t("vms.state")}</th>
+        <th data-i18n="vms.disk">${t("vms.disk")}</th>
+        <th data-i18n="vms.tags">${t("vms.tags")}</th>
+        <th data-i18n="vms.last_backup">${t("vms.last_backup")}</th>
+        <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
+      </tr></thead>
+      <tbody id="vmTableBody"></tbody>
+    </table>
   </div>`;
-  const fh = $("#vmHostFilter"); const hostId = fh ? fh.value : "";
-  const filtered = hostId ? vms.filter(v => v.hostId == hostId) : vms;
-  html += `<div class="table-wrap"><table>
-    <thead><tr>
-      <th data-i18n="common.name">${t("common.name")}</th>
-      <th data-i18n="vms.host">${t("vms.host")}</th>
-      <th data-i18n="vms.state">${t("vms.state")}</th>
-      <th data-i18n="vms.disk">${t("vms.disk")}</th>
-      <th data-i18n="vms.last_backup">${t("vms.last_backup")}</th>
-      <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
-    </tr></thead><tbody>`;
-  if (!filtered.length) html += emptyRow(6, "◈", "vms.empty");
-  else html += filtered.map(v => `<tr>
-    <td><strong>${esc(v.name)}</strong><div class="cell-mono muted">${esc(v.externalId)}</div></td>
-    <td class="cell-dim">${esc(v.hostName)}</td>
-    <td>${esc(v.state)}</td>
-    <td class="cell-mono">${fmtBytes(v.diskSizeBytes)}</td>
-    <td>${v.lastBackupStatus ? `${statusBadge(v.lastBackupStatus)}<div class="cell-mono">${fmtRelative(v.lastBackupAt)}</div>` : `<span class="muted">${t("vms.no_backup")}</span>`}</td>
-    <td class="t-actions"><button class="btn sm primary" onclick="backupVm(${v.hostId},${v.id},'${esc(v.name)}')" data-i18n="vms.backup_now">${t("vms.backup_now")}</button></td>
-  </tr>`).join("");
-  html += `</tbody></table></div>`;
-  $("#view").innerHTML = html; i18n.apply($("#view"));
-  $("#vmCount").textContent = `${filtered.length}/${vms.length}`;
-  if (hostId) $("#vmHostFilter").value = hostId;
+}
+
+function wireVmToolbar() {
+  const s = $("#vmSearch");
+  if (s) s.addEventListener("input", () => { vmState.q = s.value.trim().toLowerCase(); renderVmTable(); });
+  const binds = { vmSort: "sort", vmStatus: "status", vmHost: "host" };
+  Object.keys(binds).forEach(id => {
+    const el = $("#" + id); if (!el) return;
+    el.addEventListener("change", () => { vmState[binds[id]] = el.value; renderVmTable(); });
+  });
+}
+
+function vmFiltered() {
+  let list = (vmStore.vms || []).slice();
+  const q = vmState.q;
+  if (q) list = list.filter(v => (v.name + " " + (v.externalId || "")).toLowerCase().includes(q));
+  if (vmState.host) list = list.filter(v => String(v.hostId) === vmState.host);
+  if (vmState.status === "online") list = list.filter(v => /running|on/i.test(v.state || ""));
+  if (vmState.status === "offline") list = list.filter(v => !/running|on/i.test(v.state || ""));
+  if (vmState.status === "linked") list = list.filter(v => !!v.lastBackupAt);
+  list.sort((a, b) => {
+    if (vmState.sort === "name") return (a.name || "").localeCompare(b.name || "");
+    if (vmState.sort === "host") return (a.hostName || "").localeCompare(b.hostName || "");
+    if (vmState.sort === "disk") return (a.diskSizeBytes || 0) - (b.diskSizeBytes || 0);
+    if (vmState.sort === "backup") return new Date(a.lastBackupAt || 0) - new Date(b.lastBackupAt || 0);
+    return 0;
+  });
+  return list;
+}
+
+function renderVmTable() {
+  const body = $("#vmTableBody"); if (!body || !vmStore) return;
+  const list = vmFiltered();
+  const count = $("#vmCount");
+  if (count) count.innerHTML = `<b>${list.length}</b> / ${vmStore.vms.length}`;
+  if (!list.length) {
+    body.innerHTML = emptyRow(8, "monitor", "vms.empty");
+    i18n.apply($("#vmTable")); paint($("#vmTable"));
+    return;
+  }
+  body.innerHTML = list.map(v => {
+    const on = /running|on/i.test(v.state || "");
+    const tags = vmTags(v);
+    const lastBackup = v.lastBackupAt
+      ? `<span class="last-online"><span class="lo-dot"></span><span class="lo-time">${fmtRelativeShort(v.lastBackupAt)}</span></span>`
+      : `<span class="muted">${t("vms.no_backup")}</span>`;
+    return `<tr>
+      <td class="cell-id"><strong>${esc(v.name)}</strong><span class="sub-id">${esc(v.externalId || "—")}</span></td>
+      <td class="cell-dim">${esc(v.hostName)}</td>
+      <td>${StatusHistory(v)}</td>
+      <td><span class="state-pill ${on ? "on" : "off"}">${esc(v.state || "—")}</span></td>
+      <td class="cell-disk">${fmtBytes(v.diskSizeBytes)}</td>
+      <td><span class="tag-list">${tags.map(TagBadge).join("")}</span></td>
+      <td>${lastBackup}</td>
+      <td>${vmActions(v)}</td>
+    </tr>`;
+  }).join("");
+  paint($("#vmTable"));
+}
+
+function vmActions(v) {
+  return `<div class="t-actions">
+    ${ActionButton(t("vms.backup_now"), `backupVm(${v.hostId},${v.id},'${esc(v.name)}')`, { icon: "archive" })}
+    <button class="icon-btn" title="${esc(t("common.more"))}">${IC("more-horizontal", 16)}</button>
+  </div>`;
 }
 
 async function backupVm(hostId, vmId, vmName) {
@@ -339,7 +521,7 @@ async function runBackupVm(hostId, vmId) {
 /* STORAGES                                                               */
 /* ===================================================================== */
 async function viewStorages() {
-  setTopbar("storages.title", `<button class="btn primary" onclick="storageForm()"><span>+</span> <span data-i18n="storages.add">${t("storages.add")}</span></button>`);
+  setTopbar("storages.title", `<button class="btn primary" onclick="storageForm()">${IC("plus", 16)} <span data-i18n="storages.add">${t("storages.add")}</span></button>`);
   const list = await api.get("/api/storages");
   let html = `<div class="table-wrap"><table>
     <thead><tr>
@@ -348,14 +530,14 @@ async function viewStorages() {
       <th data-i18n="storages.path">${t("storages.path")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!list.length) html += emptyRow(4, "⛁", "storages.empty");
+  if (!list.length) html += emptyRow(4, "database", "storages.empty");
   else html += list.map(s => `<tr>
     <td><strong>${esc(s.name)}</strong></td>
     <td>${esc(t(`storages.types.${s.type}`))}</td>
     <td class="cell-mono">${esc(s.path)}</td>
     <td class="t-actions">
-      <button class="btn sm" onclick="storageForm(${s.id})">✎</button>
-      <button class="btn sm danger" onclick="delStorage(${s.id},'${esc(s.name)}')">🗑</button>
+      <button class="btn sm icon-only" onclick="storageForm(${s.id})" title="${esc(t("common.edit"))}">${IC("pencil", 14)}</button>
+      <button class="btn sm icon-only danger" onclick="delStorage(${s.id},'${esc(s.name)}')" title="${esc(t("common.delete"))}">${IC("trash-2", 14)}</button>
     </td></tr>`).join("");
   html += `</tbody></table></div>`;
   $("#view").innerHTML = html; i18n.apply($("#view"));
@@ -397,7 +579,7 @@ async function delStorage(id, name) {
 /* JOBS                                                                   */
 /* ===================================================================== */
 async function viewJobs() {
-  setTopbar("jobs.title", `<button class="btn primary" onclick="jobForm()"><span>+</span> <span data-i18n="jobs.add">${t("jobs.add")}</span></button>`);
+  setTopbar("jobs.title", `<button class="btn primary" onclick="jobForm()">${IC("plus", 16)} <span data-i18n="jobs.add">${t("jobs.add")}</span></button>`);
   const [jobs, hosts, vms, storages] = await Promise.all([
     api.get("/api/jobs"), api.get("/api/hosts"), api.get("/api/vms"), api.get("/api/storages")]);
   const vmById = Object.fromEntries(vms.map(v => [v.id, v]));
@@ -412,7 +594,7 @@ async function viewJobs() {
       <th data-i18n="common.enabled">${t("common.enabled")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!jobs.length) html += emptyRow(8, "⏰", "jobs.empty");
+  if (!jobs.length) html += emptyRow(8, "clock", "jobs.empty");
   else html += jobs.map(j => `<tr>
     <td><strong>${esc(j.name)}</strong><div class="cell-mono muted">${esc(j.vmName)} @ ${esc(j.hostName)}</div></td>
     <td class="cell-dim">${esc(j.storageName)}</td>
@@ -422,9 +604,9 @@ async function viewJobs() {
     <td class="cell-mono">${fmtRelative(j.lastRunAt)}</td>
     <td>${j.enabled ? `<span class="badge online"><span class="dot"></span>on</span>` : `<span class="badge offline"><span class="dot"></span>off</span>`}</td>
     <td class="t-actions">
-      <button class="btn sm primary" onclick="runJob(${j.id})" data-i18n="common.run_now">${t("common.run_now")}</button>
-      <button class="btn sm" onclick="jobForm(${j.id})">✎</button>
-      <button class="btn sm danger" onclick="delJob(${j.id},'${esc(j.name)}')">🗑</button>
+      <button class="btn sm icon-only primary" onclick="runJob(${j.id})" title="${esc(t("common.run_now"))}">${IC("zap", 14)}</button>
+      <button class="btn sm icon-only" onclick="jobForm(${j.id})" title="${esc(t("common.edit"))}">${IC("pencil", 14)}</button>
+      <button class="btn sm icon-only danger" onclick="delJob(${j.id},'${esc(j.name)}')" title="${esc(t("common.delete"))}">${IC("trash-2", 14)}</button>
     </td></tr>`).join("");
   html += `</tbody></table></div>`;
   $("#view").innerHTML = html; i18n.apply($("#view"));
@@ -594,7 +776,7 @@ async function delJob(id, name) {
 /* BACKUPS (history)                                                      */
 /* ===================================================================== */
 async function viewBackups() {
-  setTopbar("backups.title", `<button class="btn" onclick="router()"><span>↻</span> <span data-i18n="common.refresh">${t("common.refresh")}</span></button>`);
+  setTopbar("backups.title", `<button class="btn" onclick="router()">${IC("refresh-cw", 16)} <span data-i18n="common.refresh">${t("common.refresh")}</span></button>`);
   const rows = await api.get("/api/backups?limit=200");
   let html = `<div class="table-wrap scroll-x"><table>
     <thead><tr>
@@ -608,7 +790,7 @@ async function viewBackups() {
       <th data-i18n="backups.error">${t("backups.error")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!rows.length) html += emptyRow(9, "↯", "backups.empty");
+  if (!rows.length) html += emptyRow(9, "archive", "backups.empty");
   else html += rows.map(r => `<tr>
     <td>${statusBadge(r.status)}</td>
     <td><strong>${esc(r.vmName)}</strong><div class="cell-mono muted">${esc(r.jobName || "")}</div></td>
@@ -619,8 +801,8 @@ async function viewBackups() {
     <td class="cell-mono">${fmtRelative(r.completedAt || r.startedAt || r.queuedAt)}</td>
     <td class="cell-dim" style="max-width:240px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.error || "")}">${esc(r.error || "")}</td>
     <td class="t-actions">
-      <button class="btn sm" onclick="verifyBackup(${r.id})" title="${esc(t("common.verify"))}">✓</button>
-      <button class="btn sm" onclick="restoreFromBackup(${r.id})" title="${esc(t("common.restore"))}" ${r.status !== "succeeded" ? "disabled" : ""}>⟲</button>
+      <button class="btn sm icon-only" onclick="verifyBackup(${r.id})" title="${esc(t("common.verify"))}">${IC("shield-check", 14)}</button>
+      <button class="btn sm icon-only" onclick="restoreFromBackup(${r.id})" title="${esc(t("common.restore"))}" ${r.status !== "succeeded" ? "disabled" : ""}>${IC("rotate-ccw", 14)}</button>
     </td></tr>`).join("");
   html += `</tbody></table></div>`;
   $("#view").innerHTML = html; i18n.apply($("#view"));
@@ -655,7 +837,7 @@ async function restoreFromBackup(backupId) {
 /* VERIFICATIONS                                                          */
 /* ===================================================================== */
 async function viewVerifications() {
-  setTopbar("verifications.title", `<button class="btn primary" onclick="verifyForm()"><span>+</span> <span data-i18n="verifications.new">${t("verifications.new")}</span></button>`);
+  setTopbar("verifications.title", `<button class="btn primary" onclick="verifyForm()">${IC("plus", 16)} <span data-i18n="verifications.new">${t("verifications.new")}</span></button>`);
   const rows = await api.get("/api/verifications");
   let html = `<div class="table-wrap scroll-x"><table>
     <thead><tr>
@@ -666,7 +848,7 @@ async function viewVerifications() {
       <th data-i18n="verifications.target_path">${t("verifications.target_path")}</th>
       <th data-i18n="backups.completed">${t("backups.completed")}</th>
     </tr></thead><tbody>`;
-  if (!rows.length) html += emptyRow(6, "✓", "verifications.empty");
+  if (!rows.length) html += emptyRow(6, "shield-check", "verifications.empty");
   else html += rows.map(v => `<tr>
     <td>${statusBadge(v.status)}</td>
     <td>${esc(t(`verifications.kinds.${v.kind}`))}</td>
@@ -704,7 +886,7 @@ async function submitVerify() {
 /* RESTORES                                                               */
 /* ===================================================================== */
 async function viewRestores() {
-  setTopbar("restore.title", `<button class="btn primary" onclick="restoreForm()"><span>+</span> <span data-i18n="restore.new">${t("restore.new")}</span></button>`);
+  setTopbar("restore.title", `<button class="btn primary" onclick="restoreForm()">${IC("plus", 16)} <span data-i18n="restore.new">${t("restore.new")}</span></button>`);
   const rows = await api.get("/api/restores");
   let html = `<div class="table-wrap scroll-x"><table>
     <thead><tr>
@@ -715,7 +897,7 @@ async function viewRestores() {
       <th data-i18n="backups.completed">${t("backups.completed")}</th>
       <th data-i18n="backups.error">${t("backups.error")}</th>
     </tr></thead><tbody>`;
-  if (!rows.length) html += emptyRow(6, "⟲", "restore.empty");
+  if (!rows.length) html += emptyRow(6, "rotate-ccw", "restore.empty");
   else html += rows.map(r => `<tr>
     <td>${statusBadge(r.status)}</td>
     <td class="cell-dim">${esc(r.targetHostName)}</td>
@@ -790,11 +972,11 @@ async function viewSettings() {
   if (isAdmin) {
     html += `<div class="card">
       <div class="section-head" style="margin-top:0"><h2 data-i18n="settings.users">${t("settings.users")}</h2>
-        <button class="btn primary" onclick="userForm()"><span>+</span> <span data-i18n="settings.add_user">${t("settings.add_user")}</span></button></div>
+        <button class="btn primary" onclick="userForm()">${IC("plus", 16)} <span data-i18n="settings.add_user">${t("settings.add_user")}</span></button></div>
       <div id="usersTableWrap">${pageLoader()}</div>
     </div>`;
   } else {
-    html += `<div class="card"><div class="empty"><div class="ico">🔒</div><div data-i18n="settings.admin_only">${t("settings.admin_only")}</div></div></div>`;
+    html += `<div class="card"><div class="empty">${IC("lock", 30)}<div data-i18n="settings.admin_only">${t("settings.admin_only")}</div></div></div>`;
   }
   html += `</div>`;
   $("#view").innerHTML = html; i18n.apply($("#view"));
@@ -813,16 +995,16 @@ async function renderUsersTable() {
         <th data-i18n="common.last_login">${t("common.last_login")}</th>
         <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
       </tr></thead><tbody>`;
-    if (!users.length) html += emptyRow(5, "👤", "common.empty");
+    if (!users.length) html += emptyRow(5, "user", "common.empty");
     else html += users.map(u => `<tr>
       <td><strong>${esc(u.username)}</strong>${u.id === currentUser.id ? ` <span class="muted">(${t("settings.you")})</span>` : ""}</td>
       <td>${esc(t("roles." + u.role))}</td>
       <td>${u.enabled ? `<span class="badge online"><span class="dot"></span>${t("status.online")}</span>` : `<span class="badge offline"><span class="dot"></span>${t("status.offline")}</span>`}</td>
       <td class="cell-mono">${fmtRelative(u.lastLoginAt)}</td>
       <td class="t-actions">
-        <button class="btn sm" onclick="userForm(${u.id})" title="${esc(t("common.edit"))}">✎</button>
-        <button class="btn sm" onclick="resetPasswordForm(${u.id},'${esc(u.username)}')" title="${esc(t("common.reset_password"))}">🔑</button>
-        <button class="btn sm danger" onclick="delUser(${u.id},'${esc(u.username)}')" title="${esc(t("common.delete"))}" ${u.id === currentUser.id ? "disabled" : ""}>🗑</button>
+        <button class="btn sm icon-only" onclick="userForm(${u.id})" title="${esc(t("common.edit"))}">${IC("pencil", 14)}</button>
+        <button class="btn sm icon-only" onclick="resetPasswordForm(${u.id},'${esc(u.username)}')" title="${esc(t("common.reset_password"))}">${IC("key-round", 14)}</button>
+        <button class="btn sm icon-only danger" onclick="delUser(${u.id},'${esc(u.username)}')" title="${esc(t("common.delete"))}" ${u.id === currentUser.id ? "disabled" : ""}>${IC("trash-2", 14)}</button>
       </td></tr>`).join("");
     html += `</tbody></table></div>`;
     wrap.innerHTML = html; i18n.apply(wrap);

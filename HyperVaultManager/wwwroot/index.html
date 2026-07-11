@@ -4,16 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title data-i18n="app.title">HyperVault Manager</title>
-  <meta name="theme-color" content="#0b1220" />
+  <meta name="theme-color" content="#2563eb" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="css/styles.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23f5b301'/><path d='M18 18h10v10H18zM36 18h10v28H36zM18 36h10v10H18z' fill='%230b1220'/></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='10' fill='%232563eb'/><path d='M20 9l9 4.2v8.4c0 4.2-3.6 7.5-9 9.4-5.4-1.9-9-5.2-9-9.4V13.2z' fill='none' stroke='%23fff' stroke-width='2' stroke-linejoin='round'/><path d='M16 20l3 3 6-6' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
 </head>
 <body>
   <!-- login screen -->
   <div id="loginScreen" class="login-screen">
     <form id="loginForm" class="login-card" autocomplete="on">
-      <div class="brand-mark login-mark" aria-hidden="true">
-        <svg viewBox="0 0 64 64" width="44" height="44"><rect width="64" height="64" rx="14" fill="currentColor"/><path d="M18 18h10v10H18zM36 18h10v28H36zM18 36h10v10H18z" fill="#0b1220"/></svg>
+      <div class="login-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" width="46" height="46">
+          <rect width="40" height="40" rx="10" fill="#2563eb"/>
+          <path d="M20 9l9 4.2v8.4c0 4.2-3.6 7.5-9 9.4-5.4-1.9-9-5.2-9-9.4V13.2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M16 20l3 3 6-6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </div>
       <h2 class="login-title" data-i18n="app.title">HyperVault</h2>
       <p class="login-sub" data-i18n="auth.sign_in_subtitle">Sign in to your account</p>
@@ -33,53 +39,74 @@
   <div class="app" id="appShell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="34" height="34"><rect width="64" height="64" rx="14" fill="currentColor"/><path d="M18 18h10v10H18zM36 18h10v28H36zM18 36h10v10H18z" fill="#0b1220"/></svg>
-        </div>
-        <div class="brand-text">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="34" height="34">
+            <rect width="40" height="40" rx="10" fill="#2563eb"/>
+            <path d="M20 9l9 4.2v8.4c0 4.2-3.6 7.5-9 9.4-5.4-1.9-9-5.2-9-9.4V13.2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M16 20l3 3 6-6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="brand-text">
           <strong data-i18n="app.title">HyperVault</strong>
           <span data-i18n="app.subtitle">Hyper-V Backup Console</span>
-        </div>
+        </span>
       </div>
 
       <nav class="nav">
+        <div class="nav-group-label" data-i18n="nav.group_overview">Overview</div>
         <a href="#dashboard" class="nav-item" data-route="dashboard">
-          <span class="nav-ico">▣</span><span data-i18n="nav.dashboard">Dashboard</span>
-        </a>
-        <a href="#hosts" class="nav-item" data-route="hosts">
-          <span class="nav-ico">🖥</span><span data-i18n="nav.hosts">Hosts</span>
+          <i data-lucide="layout-dashboard" data-size="18"></i><span data-i18n="nav.dashboard">Dashboard</span>
         </a>
         <a href="#vms" class="nav-item" data-route="vms">
-          <span class="nav-ico">◈</span><span data-i18n="nav.vms">Virtual Machines</span>
+          <i data-lucide="monitor" data-size="18"></i><span data-i18n="nav.vms">Machines</span>
+        </a>
+        <a href="#hosts" class="nav-item" data-route="hosts">
+          <i data-lucide="server" data-size="18"></i><span data-i18n="nav.hosts">Hyper-V Hosts</span>
         </a>
         <a href="#storages" class="nav-item" data-route="storages">
-          <span class="nav-ico">⛁</span><span data-i18n="nav.storages">Storages</span>
+          <i data-lucide="database" data-size="18"></i><span data-i18n="nav.storages">Storage</span>
         </a>
+
+        <div class="nav-divider"></div>
+        <div class="nav-group-label" data-i18n="nav.group_protection">Protection</div>
         <a href="#jobs" class="nav-item" data-route="jobs">
-          <span class="nav-ico">⏱</span><span data-i18n="nav.jobs">Jobs</span>
+          <i data-lucide="clock" data-size="18"></i><span data-i18n="nav.jobs">Jobs</span>
         </a>
         <a href="#backups" class="nav-item" data-route="backups">
-          <span class="nav-ico">↯</span><span data-i18n="nav.backups">Backups</span>
+          <i data-lucide="archive" data-size="18"></i><span data-i18n="nav.backups">Backups</span>
         </a>
         <a href="#verifications" class="nav-item" data-route="verifications">
-          <span class="nav-ico">✓</span><span data-i18n="nav.verifications">Verifications</span>
+          <i data-lucide="shield-check" data-size="18"></i><span data-i18n="nav.verifications">Verifications</span>
         </a>
         <a href="#restores" class="nav-item" data-route="restores">
-          <span class="nav-ico">⟲</span><span data-i18n="nav.restores">Restores</span>
+          <i data-lucide="rotate-ccw" data-size="18"></i><span data-i18n="nav.restores">Restore</span>
         </a>
+
+        <div class="nav-divider"></div>
+        <div class="nav-group-label" data-i18n="nav.group_system">System</div>
         <a href="#settings" class="nav-item" data-route="settings">
-          <span class="nav-ico">⚙</span><span data-i18n="nav.settings">Settings</span>
+          <i data-lucide="settings" data-size="18"></i><span data-i18n="nav.settings">Settings</span>
         </a>
       </nav>
 
       <div class="sidebar-foot">
+        <div class="org-chip">
+          <span class="org-mark">AC</span>
+          <span class="org-meta">
+            <strong>Accept Corp</strong>
+            <span data-i18n="env.production">Production</span>
+          </span>
+          <span class="env-tag">Live</span>
+        </div>
         <div class="user-chip" id="userChip">
           <span class="user-avatar" id="userAvatar">?</span>
           <span class="user-meta">
             <strong id="userName">—</strong>
             <span id="userRole" class="user-role">—</span>
           </span>
-          <button class="icon-btn" id="logoutBtn" title="Logout" data-i18n-ph="auth.logout">⎋</button>
+          <button class="icon-btn" id="logoutBtn" title="Logout" data-i18n-ph="auth.logout" aria-label="Logout">
+            <i data-lucide="log-out" data-size="16"></i>
+          </button>
         </div>
         <label class="lang-switch">
           <span class="lang-label" data-i18n="common.language">Language</span>
@@ -109,7 +136,7 @@
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h3 id="modalTitle">—</h3>
-        <button class="icon-btn" data-close aria-label="close">✕</button>
+        <button class="icon-btn" data-close aria-label="close"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div class="modal-body" id="modalBody"></div>
       <div class="modal-foot" id="modalFoot"></div>
@@ -120,7 +147,12 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="js/i18n.js"></script>
+  <script src="js/icons.js"></script>
   <script src="js/api.js"></script>
   <script src="js/app.js"></script>
+  <script>
+    // paint static (sidebar/modal) lucide icons once bootstrapped scripts are loaded
+    window.addEventListener("DOMContentLoaded", () => window.lucide && window.lucide.createIcons());
+  </script>
 </body>
 </html>
