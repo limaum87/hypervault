@@ -205,7 +205,19 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    // Force browsers to always revalidate static assets (app.js, index.html, ...)
+    // via ETag/Last-Modified instead of silently serving stale cached copies
+    // after a redeploy. 304 responses are cheap, correctness matters more here.
+    OnPrepareResponse = ctx =>
+    {
+        var h = ctx.Context.Response.Headers;
+        h.CacheControl = "no-cache";
+        h["Pragma"] = "no-cache";
+        h.Expires = "-1";
+    }
+});
 
 // All API endpoints require authentication unless explicitly marked AllowAnonymous.
 var api = app.MapGroup("/api").RequireAuthorization();
