@@ -364,14 +364,16 @@ api.MapGet("/hosts/{id:int}", async (int id, ManagerDbContext db) =>
     return Results.Ok(Map.Host(host, vmCount));
 });
 
-api.MapPost("/hosts", async (HostCreateDto dto, ManagerDbContext db) =>
+api.MapPost("/hosts", async (HostCreateDto dto, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(dto.Name)) throw new ArgumentException("Name is required");
     if (string.IsNullOrWhiteSpace(dto.IpOrFqdn)) throw new ArgumentException("IpOrFqdn is required");
-    if (await db.Hosts.AnyAsync(h => h.Name == dto.Name))
+    if (await db.Hosts.AnyAsync(h => h.Name == dto.Name, ct))
         throw new InvalidOperationException($"Host '{dto.Name}' already exists");
 
-    var host = new HyperVHost
+    // Build a transient (untracked) host to probe the agent BEFORE persisting,
+    // so we never save a host that can't actually be reached.
+    var probe = new HyperVHost
     {
         Name = dto.Name.Trim(),
         IpOrFqdn = dto.IpOrFqdn.Trim(),
@@ -379,12 +381,56 @@ api.MapPost("/hosts", async (HostCreateDto dto, ManagerDbContext db) =>
         UseHttps = dto.UseHttps,
         ApiToken = dto.ApiToken ?? string.Empty,
         CertificateFingerprint = dto.CertificateFingerprint,
-        Notes = dto.Notes,
-        Status = HostStatuses.Unknown
     };
-    db.Hosts.Add(host);
-    await db.SaveChangesAsync();
-    return Results.Created($"/api/hosts/{host.Id}", Map.Host(host, 0));
+
+    AgentHealthResult health;
+    try
+    {
+        health = await agent.GetHealthAsync(probe, ct);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new ApiError("host_unreachable", $"Connection test failed: {ex.Message}"),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
+    }
+    if (!health.IsReady)
+    {
+        return Results.Json(new ApiError("host_not_ready",
+            $"Agent is reachable but not ready (live={health.LiveStatus}, ready={health.ReadyStatus})."),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
+    }
+
+    // Connection is good -> persist as Online and sync its VMs in the same request.
+    probe.Notes = dto.Notes;
+    probe.Status = HostStatuses.Online;
+    probe.LastSeenAt = DateTimeOffset.UtcNow;
+    db.Hosts.Add(probe);
+    await db.SaveChangesAsync(ct);
+    var host = probe;
+
+    try
+    {
+        var vms = await agent.GetVmsAsync(host, ct);
+        var now = DateTimeOffset.UtcNow;
+        foreach (var snap in vms)
+        {
+            db.VirtualMachines.Add(new VirtualMachine
+            {
+                HostId = host.Id, ExternalId = snap.Id, Name = snap.Name, State = snap.State,
+                Generation = snap.Generation, MemoryBytes = snap.MemoryBytes, DiskSizeBytes = snap.DiskSizeBytes,
+                LastSyncedAt = now
+            });
+        }
+        await db.SaveChangesAsync(ct);
+    }
+    catch (Exception ex)
+    {
+        // Host is online & saved; initial sync is best-effort and must not fail the create.
+        app.Logger.LogWarning(ex, "Host {HostId} created & online but initial VM sync failed", host.Id);
+    }
+
+    var vmCount = await db.VirtualMachines.CountAsync(v => v.HostId == host.Id, ct);
+    return Results.Created($"/api/hosts/{host.Id}", Map.Host(host, vmCount));
 });
 
 api.MapPut("/hosts/{id:int}", async (int id, HostUpdateDto dto, ManagerDbContext db) =>

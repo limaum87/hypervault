@@ -329,23 +329,13 @@ async function saveHost(id) {
   try {
     if (id) {
       await api.put(`/api/hosts/${id}`, payload); toast(t("toast.success"), "ok");
-      closeModal(); router();
     } else {
+      // Backend probes the connection first; only persists + syncs VMs if reachable.
+      toast(t("toast.testing"), "info");
       const created = await api.post("/api/hosts", payload);
-      toast(t("toast.created"), "ok");
-      closeModal(); router();
-      // On create, probe the connection and, if reachable, sync the VMs too.
-      try {
-        const r = await api.post(`/api/hosts/${created.id}/test`);
-        toast(`${t("status." + r.status)}${r.error ? " — " + r.error : ""}`, r.status === "online" ? "ok" : "err");
-        if (r.status === "online") {
-          toast(t("toast.syncing"), "info");
-          const vms = await api.post(`/api/hosts/${created.id}/sync-vms`);
-          toast(`${t("toast.success")} (${vms.length} VMs)`, "ok");
-        }
-        router();
-      } catch (e) { toast(e.message, "err"); }
+      toast(`${t("toast.created")} — ${t("status.online")} (${created.vmCount} VMs)`, "ok");
     }
+    closeModal(); router();
   } catch (e) { toast(e.message, "err"); }
 }
 
