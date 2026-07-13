@@ -29,6 +29,27 @@ public sealed class BackupEngineTests
     }
 
     [Fact]
+    public async Task IncrementalWithoutChainRunsFullBackup()
+    {
+        var root = CreateTempDirectory();
+        var vmRoot = Path.Combine(root, "vms", "ERP01");
+        Directory.CreateDirectory(vmRoot);
+        await File.WriteAllTextAsync(Path.Combine(vmRoot, "disk-0.bin"), "full-backup-content");
+
+        var destination = Path.Combine(root, "backups");
+        var services = BuildServices(Path.Combine(root, "vms"));
+
+        var result = await services.GetRequiredService<IBackupEngine>()
+            .RunIncrementalBackupAsync(new BackupRequest("ERP01", destination));
+
+        Assert.Equal(BackupStatus.Completed, result.Status);
+        Assert.Equal(BackupType.Full, result.Type);
+        Assert.StartsWith("full-", result.BackupId, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(result.Path, "chain.json")));
+        Assert.True(Directory.Exists(Path.Combine(result.Path, "full")));
+    }
+
+    [Fact]
     public async Task VerifyChainFailsWhenFileIsMissing()
     {
         var root = CreateTempDirectory();

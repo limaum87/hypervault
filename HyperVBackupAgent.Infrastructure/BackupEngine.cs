@@ -104,8 +104,13 @@ public sealed class BackupEngine : IBackupEngine
     {
         var vm = await ResolveVmAsync(request.VmNameOrId, cancellationToken);
         var vmRoot = Path.Combine(Path.GetFullPath(request.Destination), _hostName, vm.Id);
-        var chainDirectory = Directory.EnumerateDirectories(vmRoot, "chain-*").OrderBy(path => path).LastOrDefault()
-            ?? throw new InvalidOperationException($"No full backup chain found for VM '{vm.Name}'.");
+        var chainDirectory = Directory.Exists(vmRoot)
+            ? Directory.EnumerateDirectories(vmRoot, "chain-*").OrderBy(path => path).LastOrDefault()
+            : null;
+        if (chainDirectory is null)
+        {
+            return await RunFullBackupAsync(request, cancellationToken);
+        }
 
         var chain = await _metadata.LoadChainAsync(chainDirectory, cancellationToken);
         var parent = chain.RestorePoints.Last();
