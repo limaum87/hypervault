@@ -158,6 +158,64 @@ function closeModal() {
 document.addEventListener("click", (e) => { if (e.target.matches("[data-close]")) closeModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
+/* Native confirm()/alert() look rough; route confirmations through the existing
+   modal system so the UI stays consistent. Returns a Promise<boolean>. If a
+   modal is already open (e.g. the restore form), it is snapshotted and restored
+   on cancel, so we don't lose the user's input. */
+let _confirmSavedModal = null;
+function confirmModal(message, opts = {}) {
+  const { titleKey = "common.delete", confirmKey = "common.delete", danger = true } = opts;
+  if (!$("#modalRoot").classList.contains("hidden")) {
+    _confirmSavedModal = {
+      title: $("#modalTitle").textContent,
+      body: $("#modalBody").innerHTML,
+      foot: $("#modalFoot").innerHTML
+    };
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (val) => {
+      if (done) return; done = true;
+      if (cleanup) cleanup();
+      if (_confirmSavedModal) {
+        $("#modalTitle").textContent = _confirmSavedModal.title;
+        $("#modalBody").innerHTML = _confirmSavedModal.body;
+        $("#modalFoot").innerHTML = _confirmSavedModal.foot;
+        i18n.apply($("#modalRoot"));
+        _confirmSavedModal = null;
+      } else {
+        closeModal();
+      }
+      resolve(val);
+    };
+    const icon = danger ? IC("alert-triangle", 22) : IC("help-circle", 22);
+    const body = `<div class="confirm-body">
+      <div class="confirm-icon ${danger ? "danger" : "info"}">${icon}</div>
+      <div class="confirm-msg">${esc(message)}</div>
+    </div>`;
+    const foot = `<button class="btn ghost" id="cfCancel">${t("common.cancel")}</button>
+      <button class="btn ${danger ? "danger" : "primary"}" id="cfOk">${t(confirmKey)}</button>`;
+    openModal(titleKey, body, foot);
+    $("#cfOk").onclick = () => finish(true);
+    $("#cfCancel").onclick = () => finish(false);
+    // Esc/Enter and backdrop clicks must drive confirm/cancel instead of the
+    // global handlers that would just hide (and drop) the underlying modal.
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopImmediatePropagation(); e.preventDefault(); finish(false); }
+      else if (e.key === "Enter") { e.stopImmediatePropagation(); e.preventDefault(); finish(true); }
+    };
+    const onBackdrop = (e) => {
+      if (e.target.closest(".modal-backdrop")) { e.stopImmediatePropagation(); e.preventDefault(); finish(false); }
+    };
+    document.addEventListener("keydown", onKey, { capture: true });
+    document.addEventListener("click", onBackdrop, { capture: true });
+    const cleanup = () => {
+      document.removeEventListener("keydown", onKey, { capture: true });
+      document.removeEventListener("click", onBackdrop, { capture: true });
+    };
+  });
+}
+
 /* ---------- topbar ---------- */
 function setTopbar(titleKey, actionsHtml = "") {
   $("#pageTitle").textContent = t(titleKey);
@@ -340,7 +398,7 @@ async function saveHost(id) {
 }
 
 async function delHost(id, name) {
-  if (!confirm(`${t("common.confirm_delete")}\n${name}`)) return;
+  if (!await confirmModal(`${t("common.confirm_delete")}\n${name}`, { titleKey: "common.delete", confirmKey: "common.delete" })) return;
   try { await api.del(`/api/hosts/${id}`); toast(t("toast.deleted"), "ok"); router(); }
   catch (e) { toast(e.message, "err"); }
 }
@@ -576,7 +634,7 @@ async function saveStorage(id) {
 }
 
 async function delStorage(id, name) {
-  if (!confirm(`${t("common.confirm_delete")}\n${name}`)) return;
+  if (!await confirmModal(`${t("common.confirm_delete")}\n${name}`, { titleKey: "common.delete", confirmKey: "common.delete" })) return;
   try { await api.del(`/api/storages/${id}`); toast(t("toast.deleted"), "ok"); router(); }
   catch (e) { toast(e.message, "err"); }
 }
@@ -741,12 +799,19 @@ function fmtInTz(iso, tzId) {
 }
 function filterVmOptions() {
   const host = $("#jfHost").value;
-  $$("#jfVm option").forEach(o => {
+  const opts = $$("#jfVm option");
+  opts.forEach(o => {
     const match = !host || o.dataset.host == host;
     o.hidden = !match;
   });
-  const firstVisible = $$("#jfVm option").find(o => !o.hidden);
-  if (firstVisible) firstVisible.selected = true;
+  // Preserve the current selection when it is still valid; only fall back to
+  // the first visible VM when the selected one is hidden (e.g. host changed).
+  // Otherwise editing a job would always reset the VM to the first in the list.
+  const sel = opts.find(o => o.selected);
+  if (!sel || sel.hidden) {
+    const firstVisible = opts.find(o => !o.hidden);
+    if (firstVisible) firstVisible.selected = true;
+  }
 }
 async function saveJob(id) {
   const f = $("#jf"); const fd = new FormData(f);
@@ -773,7 +838,7 @@ async function runJob(id) {
   catch (e) { toast(e.message, "err"); }
 }
 async function delJob(id, name) {
-  if (!confirm(`${t("common.confirm_delete")}\n${name}`)) return;
+  if (!await confirmModal(`${t("common.confirm_delete")}\n${name}`, { titleKey: "common.delete", confirmKey: "common.delete" })) return;
   try { await api.del(`/api/jobs/${id}`); toast(t("toast.deleted"), "ok"); router(); }
   catch (e) { toast(e.message, "err"); }
 }
@@ -938,7 +1003,7 @@ async function restoreForm() {
 async function submitRestore() {
   const f = $("#rf"); const fd = new FormData(f);
   const overwrite = f.overwriteExisting.checked;
-  if (overwrite && !confirm(t("restore.confirm"))) { return; }
+  if (overwrite && !await confirmModal(t("restore.confirm"), { titleKey: "restore.title", confirmKey: "common.restore" })) { return; }
   const payload = {
     sourceHostId: Number(fd.get("sourceHostId")), targetHostId: Number(fd.get("targetHostId")),
     restorePointPath: fd.get("restorePointPath"), destination: fd.get("destination"),
@@ -1063,7 +1128,7 @@ async function submitResetPassword(id) {
 }
 
 async function delUser(id, username) {
-  if (!confirm(`${t("common.confirm_delete")}\n${username}`)) return;
+  if (!await confirmModal(`${t("common.confirm_delete")}\n${username}`, { titleKey: "common.delete", confirmKey: "common.delete" })) return;
   try { await api.del(`/api/users/${id}`); toast(t("toast.user_deleted"), "ok"); renderUsersTable(); }
   catch (e) { toast(e.message, "err"); }
 }
