@@ -701,6 +701,26 @@ api.MapPost("/verify", async (VerifyDto dto, ManagerDbContext db, IJobQueue queu
     return Results.Accepted($"/api/verifications/{v.Id}", new { v.Id });
 });
 
+// Verify the latest completed backup of a job (job-centric entry point for the UI).
+api.MapPost("/jobs/{id:int}/verify", async (int id, ManagerDbContext db, IJobQueue queue) =>
+{
+    var job = await db.Jobs.FirstOrDefaultAsync(j => j.Id == id)
+        ?? throw new InvalidOperationException($"Job {id} not found");
+    var run = await db.BackupRuns
+        .Where(r => r.JobId == id && r.Status == RunStatuses.Succeeded && r.ResultPath != null && r.ResultPath != "")
+        .OrderByDescending(r => r.CompletedAt ?? r.QueuedAt)
+        .FirstOrDefaultAsync()
+        ?? throw new InvalidOperationException($"No completed backup found for job '{job.Name}' to verify");
+    var v = new VerificationRun
+    {
+        BackupRunId = run.Id, HostId = run.HostId, Kind = VerifyKinds.Chain,
+        TargetPath = run.ResultPath!, Status = RunStatuses.Queued, QueuedAt = DateTimeOffset.UtcNow
+    };
+    db.VerificationRuns.Add(v); await db.SaveChangesAsync();
+    queue.Enqueue(new VerifyJobRequest(v.Id));
+    return Results.Accepted($"/api/verifications/{v.Id}", new { v.Id, BackupRunId = run.Id });
+});
+
 // ---------- RESTORE ----------
 api.MapGet("/restores", async (ManagerDbContext db) =>
 {

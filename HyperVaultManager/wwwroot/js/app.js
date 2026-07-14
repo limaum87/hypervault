@@ -933,15 +933,13 @@ async function viewVerifications() {
 }
 
 async function verifyForm() {
-  const hosts = await api.get("/api/hosts");
-  if (!hosts.length) { toast("Add a host first", "err"); location.hash = "#hosts"; return; }
-  const hOpts = hosts.map(h => `<option value="${h.id}">${esc(h.name)}</option>`).join("");
+  const jobs = await api.get("/api/jobs");
+  if (!jobs.length) { toast(t("verifications.no_jobs"), "err"); location.hash = "#jobs"; return; }
+  const opts = jobs.map(j => `<option value="${j.id}">${esc(j.name)} — ${esc(j.vmName)}</option>`).join("");
   const body = `<form id="vf" class="form-grid">
-    <div class="field"><label data-i18n="common.host">${t("common.host")}</label><select name="hostId" required>${hOpts}</select></div>
-    <div class="field"><label data-i18n="verifications.kind">${t("verifications.kind")}</label><select name="kind">
-      <option value="chain">${t("verifications.kinds.chain")}</option>
-      <option value="restore">${t("verifications.kinds.restore")}</option></select></div>
-    <div class="field full"><label data-i18n="verifications.target_path">${t("verifications.target_path")}</label><input name="targetPath" required /></div>
+    <div class="field full"><label data-i18n="verifications.select_job">${t("verifications.select_job")}</label>
+      <select name="jobId" required>${opts}</select></div>
+    <p class="muted form-hint" data-i18n="verifications.job_hint">${t("verifications.job_hint")}</p>
   </form>`;
   const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
     <button class="btn primary" onclick="submitVerify()"><span data-i18n="common.verify">${t("common.verify")}</span></button>`;
@@ -949,7 +947,7 @@ async function verifyForm() {
 }
 async function submitVerify() {
   const f = $("#vf"); const fd = new FormData(f);
-  try { await api.post("/api/verify", { hostId: Number(fd.get("hostId")), kind: fd.get("kind"), targetPath: fd.get("targetPath") }); toast(t("toast.queued"), "ok"); closeModal(); router(); }
+  try { await api.post(`/api/jobs/${Number(fd.get("jobId"))}/verify`); toast(t("toast.queued"), "ok"); closeModal(); router(); }
   catch (e) { toast(e.message, "err"); }
 }
 

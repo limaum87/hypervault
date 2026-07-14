@@ -178,6 +178,9 @@
   "verifications.kinds.chain": "Verificar cadeia",
   "verifications.kinds.restore": "Verificar restore",
   "verifications.new": "Nova verificação",
+  "verifications.select_job": "Selecionar job",
+  "verifications.job_hint": "Será verificado o último backup concluído deste job.",
+  "verifications.no_jobs": "Crie um job primeiro",
 
   "restore.title": "Restores",
   "restore.source_host": "Host de origem",
