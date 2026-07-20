@@ -1051,7 +1051,7 @@ async function restoreForm(prefill = {}) {
 
     <div class="field full">
       <label data-i18n="restore.destination">${t("restore.destination")}</label>
-      <input name="destination" id="rfDestination" required />
+      <input name="destination" id="rfDestination" required oninput="this.dataset.touched='1'" />
       <span class="hint" id="rfDestHint"></span>
     </div>
 
@@ -1082,6 +1082,8 @@ async function onRestoreVmChanged(selectBackupId = null) {
   if (th && vm) th.value = String(vm.hostId);
   const nameInput = $("#rfNewName");
   if (nameInput) nameInput.dataset.touched = ""; // re-apply defaults on VM change
+  const destInput = $("#rfDestination");
+  if (destInput) destInput.dataset.touched = ""; // re-apply suggested path on VM change
   await loadRestorePoints(vm, selectBackupId);
   toggleRestoreMode();
 }
@@ -1134,6 +1136,13 @@ function onRestorePointChanged() {
   if (card) card.classList.add('selected');
 }
 
+// Sensible Windows default for the restore destination on the target host.
+// Mirrors the NewName suffix so each restore lands in its own predictable folder.
+function defaultRestoreDestination(baseName, mode) {
+  const sub = mode === "disk_only" ? `${baseName}-disk` : `${baseName}-restored`;
+  return `C:\\ProgramData\\HyperVault\\Restores\\${sub}`;
+}
+
 function toggleRestoreMode() {
   const f = $("#rf"); if (!f) return;
   const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
@@ -1143,16 +1152,20 @@ function toggleRestoreMode() {
   const baseName = vm ? vm.name : "restored";
   const nameInput = $("#rfNewName");
   const nameLabel = $("#rfNewNameLabel");
+  const destInput = $("#rfDestination");
   const destHint = $("#rfDestHint");
+  const autoNote = t("restore.dest_auto_note");
   if (diskOnly) {
     if (nameLabel) nameLabel.textContent = t("restore.disk_prefix");
-    if (destHint) destHint.textContent = t("restore.dest_hint_disk_only");
+    if (destHint) destHint.textContent = `${t("restore.dest_hint_disk_only")} ${autoNote}`;
     if (nameInput && !nameInput.dataset.touched) nameInput.value = `${baseName}-disk`;
   } else {
     if (nameLabel) nameLabel.textContent = t("restore.new_name");
-    if (destHint) destHint.textContent = t("restore.dest_hint_new_vm");
+    if (destHint) destHint.textContent = `${t("restore.dest_hint_new_vm")} ${autoNote}`;
     if (nameInput && !nameInput.dataset.touched) nameInput.value = `${baseName}-restored`;
   }
+  // Pre-fill a suggested path until the operator edits it (dataset.touched gate).
+  if (destInput && !destInput.dataset.touched) destInput.value = defaultRestoreDestination(baseName, mode);
 }
 
 async function submitRestore() {
