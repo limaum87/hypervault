@@ -198,7 +198,10 @@ app.MapPost("/jobs/restore", ([FromBody] RestoreRequest request, IRestoreEngine 
     var job = jobs.Enqueue("restore", validated.NewName, validated.Destination, async ct =>
     {
         await engine.RestoreAsync(validated, ct);
-        return new ApiJobOutcome(validated.Destination, $"Restore completed: {validated.NewName}");
+        var msg = validated.CreateVm
+            ? $"Restore completed: VM '{validated.NewName}' created at {validated.Destination}"
+            : $"Restore completed: disks materialized at {validated.Destination} (no VM created).";
+        return new ApiJobOutcome(validated.Destination, msg);
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });

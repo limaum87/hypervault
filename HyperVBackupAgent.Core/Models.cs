@@ -64,7 +64,8 @@ public sealed record RestoreRequest(
     string Destination,
     string NewName,
     bool OverwriteExisting = false,
-    string? TargetBackupId = null);
+    string? TargetBackupId = null,
+    bool CreateVm = true);
 
 public sealed record BackupResult(
     string BackupId,

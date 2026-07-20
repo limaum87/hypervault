@@ -14,7 +14,6 @@
   "nav.group_overview": "Visão Geral",
   "nav.group_protection": "Proteção",
   "nav.group_system": "Sistema",
-
   "common.add": "Adicionar",
   "common.edit": "Editar",
   "common.delete": "Excluir",
@@ -50,7 +49,6 @@
   "common.none": "—",
   "common.never": "nunca",
   "common.unknown": "Desconhecido",
-
   "status.online": "Online",
   "status.offline": "Offline",
   "status.unknown": "Desconhecido",
@@ -59,7 +57,6 @@
   "status.succeeded": "Concluído",
   "status.failed": "Falhou",
   "status.canceled": "Cancelado",
-
   "dashboard.title": "Painel",
   "dashboard.total_hosts": "Total de hosts",
   "dashboard.online_hosts": "Hosts online",
@@ -72,7 +69,6 @@
   "dashboard.recent_backups": "Backups recentes",
   "dashboard.recent_failures": "Falhas recentes",
   "dashboard.no_recent": "Sem atividade recente.",
-
   "hosts.title": "Hosts Hyper-V",
   "hosts.add": "Adicionar host",
   "hosts.edit": "Editar host",
@@ -90,7 +86,6 @@
   "hosts.sync_vms": "Sincronizar VMs",
   "hosts.agent_version": "Versão do agente",
   "hosts.empty": "Nenhum host cadastrado. Adicione seu primeiro host Hyper-V.",
-
   "vms.title": "Máquinas",
   "vms.host": "Host",
   "vms.state": "Estado",
@@ -113,7 +108,6 @@
   "vms.offline_sub": "Desligadas",
   "vms.search_placeholder": "Buscar por nome ou ID da máquina...",
   "vms.type": "Tipo",
-
   "storages.title": "Destinos de Storage",
   "storages.add": "Adicionar storage",
   "storages.type": "Tipo",
@@ -122,7 +116,6 @@
   "storages.types.local_path": "Caminho local",
   "storages.types.smb": "Compartilhamento SMB",
   "storages.empty": "Nenhum storage configurado.",
-
   "jobs.title": "Jobs de Backup",
   "jobs.add": "Adicionar job",
   "jobs.host": "Host",
@@ -149,10 +142,13 @@
   "jobs.types.full": "Completo",
   "jobs.types.incremental": "Incremental",
   "jobs.name": "Nome do job",
-
-  "days.sun": "Dom", "days.mon": "Seg", "days.tue": "Ter", "days.wed": "Qua",
-  "days.thu": "Qui", "days.fri": "Sex", "days.sat": "Sáb",
-
+  "days.sun": "Dom",
+  "days.mon": "Seg",
+  "days.tue": "Ter",
+  "days.wed": "Qua",
+  "days.thu": "Qui",
+  "days.fri": "Sex",
+  "days.sat": "Sáb",
   "backups.title": "Histórico de Backups",
   "backups.host": "Host",
   "backups.vm": "VM",
@@ -167,7 +163,6 @@
   "backups.empty": "Nenhuma execução de backup registrada.",
   "backups.agent_job": "Job no agente",
   "backups.correlation": "Correlação",
-
   "verifications.title": "Verificações",
   "verifications.kind": "Tipo",
   "verifications.target_path": "Caminho alvo",
@@ -181,7 +176,6 @@
   "verifications.select_job": "Selecionar job",
   "verifications.job_hint": "Será verificado o último backup concluído deste job.",
   "verifications.no_jobs": "Crie um job primeiro",
-
   "restore.title": "Restores",
   "restore.source_host": "Host de origem",
   "restore.target_host": "Host de destino",
@@ -194,7 +188,6 @@
   "restore.empty": "Nenhum restore ainda.",
   "restore.new": "Novo restore",
   "restore.confirm": "Confirmar restore: sobrescrever uma VM existente?",
-
   "toast.success": "Concluído",
   "toast.error": "Erro",
   "toast.created": "Criado",
@@ -208,7 +201,6 @@
   "toast.user_created": "Usuário criado",
   "toast.user_deleted": "Usuário excluído",
   "toast.network_error": "Erro de rede",
-
   "auth.sign_in": "Entrar",
   "auth.sign_in_subtitle": "Acesse sua conta",
   "auth.logout": "Sair",
@@ -220,15 +212,34 @@
   "auth.change_password": "Alterar senha",
   "auth.invalid": "Usuário ou senha inválidos.",
   "auth.password_mismatch": "As novas senhas não coincidem.",
-
   "roles.admin": "Administrador",
   "roles.user": "Usuário",
-
   "settings.title": "Configurações",
   "settings.my_account": "Minha conta",
   "settings.users": "Usuários",
   "settings.add_user": "Adicionar usuário",
   "settings.edit_user": "Editar usuário",
   "settings.admin_only": "A gestão de usuários está disponível apenas para administradores.",
-  "settings.you": "você"
+  "settings.you": "você",
+  "restore.source_vm": "VM de origem",
+  "restore.select_vm": "Selecione a VM que deseja restaurar",
+  "restore.no_vms": "Nenhuma VM disponível. Adicione ou sincronize um host com VMs antes.",
+  "restore.restore_points": "Pontos de restore",
+  "restore.no_restore_points": "Nenhum ponto de restore encontrado para esta VM no host.",
+  "restore.loading_restore_points": "Carregando pontos de restore…",
+  "restore.load_failed": "Falha ao carregar os pontos de restore do host.",
+  "restore.pick_point": "Escolha o ponto até o qual restaurar",
+  "restore.latest": "mais recente",
+  "restore.mode": "Modo de restore",
+  "restore.mode.new_vm": "Criar uma nova VM",
+  "restore.mode.new_vm_desc": "Materializa os discos e registra uma nova VM no Hyper-V do host de destino.",
+  "restore.mode.disk_only": "Somente disco (para teste)",
+  "restore.mode.disk_only_desc": "Materializa o(s) disco(s) no destino e deixa pronto para montar. Nenhuma VM é criada.",
+  "restore.modes.new_vm": "Nova VM",
+  "restore.modes.disk_only": "Somente disco",
+  "restore.disk_prefix": "Prefixo do nome do disco",
+  "restore.target_host_hint": "Onde o restore será executado e a VM/disco será criada.",
+  "restore.dest_hint_new_vm": "Pasta onde os discos restaurados são materializados antes de criar a VM.",
+  "restore.dest_hint_disk_only": "Pasta onde o(s) disco(s) restaurado(s) serão gravados e deixados prontos para montar.",
+  "restore.chain_path": "Caminho da chain"
 }

@@ -884,24 +884,38 @@ async function verifyBackup(id) {
   catch (e) { toast(e.message, "err"); }
 }
 
+// ---- Restore wizard state ----
+let _rfVms = [];
+let _rfHosts = [];
+let _rpList = [];        // restore points loaded for the currently selected VM
+let _rpChainPath = "";   // chain directory resolved from the selected point (sent to the agent)
+
+// The agent serializes BackupType as an integer (0=Full,1=Incremental). Be tolerant.
+function rpTypeLabel(v) {
+  const s = String(v ?? "").toLowerCase();
+  if (v === 0 || s === "full") return t("jobs.types.full");
+  if (v === 1 || s === "incremental" || s === "inc") return t("jobs.types.incremental");
+  return esc(v);
+}
+function rpTypeBadge(v) { return `<span class="badge unknown"><span class="dot"></span>${rpTypeLabel(v)}</span>`; }
+function modeBadge(mode) {
+  const m = mode || "new_vm";
+  const labelKey = `restore.modes.${m}`;
+  const label = t(labelKey) === labelKey ? m : t(labelKey);
+  const cls = m === "disk_only" ? "unknown" : "online";
+  return `<span class="badge ${cls}"><span class="dot"></span>${esc(label)}</span>`;
+}
+
+// Entry point from the Backups view: prefill the wizard with the VM that owns this backup.
 async function restoreFromBackup(backupId) {
   const b = await api.get(`/api/backups/${backupId}`);
-  const hosts = await api.get("/api/hosts");
-  const hOpts = hosts.map(h => `<option value="${h.id}" ${h.id === b.hostId ? "selected" : ""}>${esc(h.name)}</option>`).join("");
-  const body = `<form id="rf" class="form-grid">
-    <div class="field full"><div class="warn-box" data-i18n="restore.safety_warning">${t("restore.safety_warning")}</div></div>
-    <div class="field full"><label data-i18n="restore.restore_point">${t("restore.restore_point")}</label><input name="restorePointPath" value="${esc(b.resultPath || "")}" required /></div>
-    <div class="field"><label data-i18n="restore.target_host">${t("restore.target_host")}</label><select name="targetHostId" required>${hOpts}</select></div>
-    <div class="field"><label data-i18n="restore.new_name">${t("restore.new_name")}</label><input name="newName" required value="${esc(b.vmName)}-restored" /></div>
-    <div class="field full"><label data-i18n="restore.destination">${t("restore.destination")}</label><input name="destination" required /></div>
-    <div class="field"><label data-i18n="restore.target_backup_id">${t("restore.target_backup_id")}</label><input name="targetBackupId" placeholder="inc-0001" /></div>
-    <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="overwriteExisting" /> <span data-i18n="restore.overwrite">${t("restore.overwrite")}</span></label></div>
-    <input type="hidden" name="sourceHostId" value="${b.hostId}" />
-    <input type="hidden" name="backupRunId" value="${b.id}" />
-  </form>`;
-  const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
-    <button class="btn primary" onclick="submitRestore()"><span data-i18n="common.restore">${t("common.restore")}</span></button>`;
-  openModal("restore.new", body, foot);
+  restoreForm({
+    sourceVmId: b.vmId,
+    targetHostId: b.hostId,
+    targetBackupId: b.backupId,
+    restorePointPath: b.resultPath,
+    backupRunId: b.id,
+  });
 }
 
 /* ===================================================================== */
@@ -960,17 +974,21 @@ async function viewRestores() {
   let html = `<div class="table-wrap scroll-x"><table>
     <thead><tr>
       <th data-i18n="common.status">${t("common.status")}</th>
+      <th data-i18n="restore.mode">${t("restore.mode")}</th>
+      <th data-i18n="restore.source_vm">${t("restore.source_vm")}</th>
       <th data-i18n="restore.target_host">${t("restore.target_host")}</th>
       <th data-i18n="restore.new_name">${t("restore.new_name")}</th>
       <th data-i18n="restore.destination">${t("restore.destination")}</th>
       <th data-i18n="backups.completed">${t("backups.completed")}</th>
       <th data-i18n="backups.error">${t("backups.error")}</th>
     </tr></thead><tbody>`;
-  if (!rows.length) html += emptyRow(6, "rotate-ccw", "restore.empty");
+  if (!rows.length) html += emptyRow(8, "rotate-ccw", "restore.empty");
   else html += rows.map(r => `<tr>
     <td>${statusBadge(r.status)}</td>
+    <td>${modeBadge(r.mode)}</td>
+    <td><strong>${esc(r.sourceVmName || "—")}</strong></td>
     <td class="cell-dim">${esc(r.targetHostName)}</td>
-    <td><strong>${esc(r.newName)}</strong></td>
+    <td>${esc(r.newName)}</td>
     <td class="cell-mono">${esc(r.destination)}</td>
     <td class="cell-mono">${fmtRelative(r.completedAt || r.startedAt || r.queuedAt)}</td>
     <td class="cell-dim" style="max-width:240px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.error || "")}">${esc(r.error || "")}</td>
@@ -979,36 +997,191 @@ async function viewRestores() {
   $("#view").innerHTML = html; i18n.apply($("#view"));
 }
 
-async function restoreForm() {
-  const hosts = await api.get("/api/hosts");
-  if (!hosts.length) { toast("Add a host first", "err"); location.hash = "#hosts"; return; }
-  const hOpts = hosts.map(h => `<option value="${h.id}">${esc(h.name)}</option>`).join("");
+async function restoreForm(prefill = {}) {
+  const [hosts, vms] = await Promise.all([api.get("/api/hosts"), api.get("/api/vms")]);
+  if (!hosts.length) { toast(t("restore.no_vms"), "err"); location.hash = "#hosts"; return; }
+  if (!vms.length) { toast(t("restore.no_vms"), "err"); location.hash = "#vms"; return; }
+  _rfHosts = hosts; _rfVms = vms;
+
+  const vmOpts = vms.map(v => `<option value="${v.id}" data-host="${v.hostId}" ${prefill.sourceVmId === v.id ? "selected" : ""}>${esc(v.name)} — ${esc(v.hostName)}</option>`).join("");
+  const hostOpts = hosts.map(h => `<option value="${h.id}" ${prefill.targetHostId === h.id ? "selected" : ""}>${esc(h.name)}</option>`).join("");
+  const newVmChecked = (prefill.mode || "new_vm") === "new_vm" ? "checked" : "";
+  const diskChecked = prefill.mode === "disk_only" ? "checked" : "";
+
   const body = `<form id="rf" class="form-grid">
     <div class="field full"><div class="warn-box" data-i18n="restore.safety_warning">${t("restore.safety_warning")}</div></div>
-    <div class="field"><label data-i18n="restore.source_host">${t("restore.source_host")}</label><select name="sourceHostId" required>${hOpts}</select></div>
-    <div class="field"><label data-i18n="restore.target_host">${t("restore.target_host")}</label><select name="targetHostId" required>${hOpts}</select></div>
-    <div class="field full"><label data-i18n="restore.restore_point">${t("restore.restore_point")}</label><input name="restorePointPath" required /></div>
-    <div class="field full"><label data-i18n="restore.destination">${t("restore.destination")}</label><input name="destination" required /></div>
-    <div class="field"><label data-i18n="restore.new_name">${t("restore.new_name")}</label><input name="newName" required /></div>
-    <div class="field"><label data-i18n="restore.target_backup_id">${t("restore.target_backup_id")}</label><input name="targetBackupId" placeholder="inc-0001" /></div>
-    <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="overwriteExisting" /> <span data-i18n="restore.overwrite">${t("restore.overwrite")}</span></label></div>
+
+    <div class="field full">
+      <label data-i18n="restore.source_vm">${t("restore.source_vm")}</label>
+      <select name="sourceVmId" id="rfVm" onchange="onRestoreVmChanged()" required>${vmOpts}</select>
+      <span class="hint" data-i18n="restore.select_vm">${t("restore.select_vm")}</span>
+    </div>
+
+    <div class="field full">
+      <label data-i18n="restore.restore_points">${t("restore.restore_points")}</label>
+      <div id="rfPoints" class="rp-list"><span class="hint" data-i18n="restore.loading_restore_points">${t("restore.loading_restore_points")}</span></div>
+    </div>
+
+    <div class="field full">
+      <label data-i18n="restore.mode">${t("restore.mode")}</label>
+      <div class="radio-cards">
+        <label class="radio-card">
+          <input type="radio" name="mode" value="new_vm" ${newVmChecked} onchange="toggleRestoreMode()" />
+          <span class="rc-title">${IC("monitor", 16)} <span data-i18n="restore.mode.new_vm">${t("restore.mode.new_vm")}</span></span>
+          <span class="rc-desc" data-i18n="restore.mode.new_vm_desc">${t("restore.mode.new_vm_desc")}</span>
+        </label>
+        <label class="radio-card">
+          <input type="radio" name="mode" value="disk_only" ${diskChecked} onchange="toggleRestoreMode()" />
+          <span class="rc-title">${IC("hard-drive", 16)} <span data-i18n="restore.mode.disk_only">${t("restore.mode.disk_only")}</span></span>
+          <span class="rc-desc" data-i18n="restore.mode.disk_only_desc">${t("restore.mode.disk_only_desc")}</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label data-i18n="restore.target_host">${t("restore.target_host")}</label>
+      <select name="targetHostId" id="rfTargetHost" required>${hostOpts}</select>
+      <span class="hint" data-i18n="restore.target_host_hint">${t("restore.target_host_hint")}</span>
+    </div>
+
+    <div class="field">
+      <label id="rfNewNameLabel" data-i18n="restore.new_name">${t("restore.new_name")}</label>
+      <input name="newName" id="rfNewName" required oninput="this.dataset.touched='1'" />
+    </div>
+
+    <div class="field full">
+      <label data-i18n="restore.destination">${t("restore.destination")}</label>
+      <input name="destination" id="rfDestination" required />
+      <span class="hint" id="rfDestHint"></span>
+    </div>
+
+    <div class="field full rf-newvm-only">
+      <label class="check"><input type="checkbox" name="overwriteExisting" id="rfOverwrite" /> <span data-i18n="restore.overwrite">${t("restore.overwrite")}</span></label>
+    </div>
+
+    <input type="hidden" name="sourceHostId" id="rfSourceHost" />
+    <input type="hidden" name="backupRunId" value="${prefill.backupRunId || ""}" />
   </form>`;
+
   const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
     <button class="btn primary" onclick="submitRestore()"><span data-i18n="common.restore">${t("common.restore")}</span></button>`;
   openModal("restore.new", body, foot);
+
+  _rpList = [];
+  _rpChainPath = prefill.restorePointPath || "";
+  await onRestoreVmChanged(prefill.targetBackupId);
+  toggleRestoreMode();
+}
+
+async function onRestoreVmChanged(selectBackupId = null) {
+  const f = $("#rf"); if (!f) return;
+  const vmId = Number(f.sourceVmId.value);
+  const vm = _rfVms.find(v => v.id === vmId);
+  $("#rfSourceHost").value = vm ? String(vm.hostId) : "";
+  const th = $("#rfTargetHost");
+  if (th && vm) th.value = String(vm.hostId);
+  const nameInput = $("#rfNewName");
+  if (nameInput) nameInput.dataset.touched = ""; // re-apply defaults on VM change
+  await loadRestorePoints(vm, selectBackupId);
+  toggleRestoreMode();
+}
+
+async function loadRestorePoints(vm, selectBackupId = null) {
+  const box = $("#rfPoints");
+  if (!box) return;
+  if (!vm) { _rpList = []; box.innerHTML = `<span class="hint">${t("restore.no_restore_points")}</span>`; return; }
+  box.innerHTML = `<span class="hint" data-i18n="restore.loading_restore_points">${t("restore.loading_restore_points")}</span>`;
+  try {
+    const points = await api.get(`/api/hosts/${vm.hostId}/vms/${vm.id}/restore-points`);
+    _rpList = Array.isArray(points) ? points : [];
+    renderRestorePoints(_rpList, selectBackupId);
+  } catch (e) {
+    _rpList = [];
+    box.innerHTML = `<span class="hint" style="color:var(--err)">${esc(e.message || t("restore.load_failed"))}</span>`;
+  }
+}
+
+function renderRestorePoints(points, selectBackupId = null) {
+  const box = $("#rfPoints");
+  if (!points.length) { box.innerHTML = `<span class="hint">${t("restore.no_restore_points")}</span>`; _rpChainPath = ""; return; }
+  const sorted = [...points].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const preselect = selectBackupId && points.some(p => p.backupId === selectBackupId)
+    ? selectBackupId
+    : sorted[sorted.length - 1].backupId;
+  box.innerHTML = `<div class="hint" style="margin-bottom:6px" data-i18n="restore.pick_point">${t("restore.pick_point")}</div>` +
+    sorted.map((p, i) => {
+      const isLatest = i === sorted.length - 1;
+      const checked = p.backupId === preselect ? "checked" : "";
+      const size = p.sizeBytes ? fmtBytes(p.sizeBytes) : "—";
+      return `<label class="rp-card ${checked ? "selected" : ""}">
+        <input type="radio" name="rpChoice" value="${esc(p.backupId)}" ${checked} onchange="onRestorePointChanged()" />
+        <span class="rp-type">${rpTypeBadge(p.type)}</span>
+        <span class="rp-main"><strong>${esc(p.backupId)}</strong>${isLatest ? ` <span class="badge unknown"><span class="dot"></span>${t("restore.latest")}</span>` : ""}<br><span class="muted cell-mono">${fmtDate(p.createdAt)}</span></span>
+        <span class="rp-size">${size}</span>
+      </label>`;
+    }).join("");
+  onRestorePointChanged();
+}
+
+function onRestorePointChanged() {
+  const f = $("#rf");
+  const chosen = f && f.querySelector('input[name="rpChoice"]:checked');
+  if (!chosen) { _rpChainPath = ""; return; }
+  const p = _rpList.find(x => x.backupId === chosen.value);
+  _rpChainPath = p ? (p.chainPath || p.restorePointPath || "") : "";
+  $$('#rf .rp-card').forEach(el => el.classList.remove('selected'));
+  const card = chosen.closest('.rp-card');
+  if (card) card.classList.add('selected');
+}
+
+function toggleRestoreMode() {
+  const f = $("#rf"); if (!f) return;
+  const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
+  const diskOnly = mode === "disk_only";
+  $$('#rf .rf-newvm-only').forEach(el => el.style.display = diskOnly ? 'none' : '');
+  const vm = _rfVms.find(v => v.id === Number(f.sourceVmId.value));
+  const baseName = vm ? vm.name : "restored";
+  const nameInput = $("#rfNewName");
+  const nameLabel = $("#rfNewNameLabel");
+  const destHint = $("#rfDestHint");
+  if (diskOnly) {
+    if (nameLabel) nameLabel.textContent = t("restore.disk_prefix");
+    if (destHint) destHint.textContent = t("restore.dest_hint_disk_only");
+    if (nameInput && !nameInput.dataset.touched) nameInput.value = `${baseName}-disk`;
+  } else {
+    if (nameLabel) nameLabel.textContent = t("restore.new_name");
+    if (destHint) destHint.textContent = t("restore.dest_hint_new_vm");
+    if (nameInput && !nameInput.dataset.touched) nameInput.value = `${baseName}-restored`;
+  }
 }
 
 async function submitRestore() {
-  const f = $("#rf"); const fd = new FormData(f);
+  const f = $("#rf");
+  if (!f.reportValidity()) return;
+  const fd = new FormData(f);
+  const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
   const overwrite = f.overwriteExisting.checked;
-  if (overwrite && !await confirmModal(t("restore.confirm"), { titleKey: "restore.title", confirmKey: "common.restore" })) { return; }
+  if (mode === "new_vm" && overwrite && !await confirmModal(t("restore.confirm"), { titleKey: "restore.title", confirmKey: "common.restore" })) { return; }
+
+  const chosen = f.querySelector('input[name="rpChoice"]:checked');
+  const chosenBackupId = chosen ? chosen.value : null;
+  const vmId = Number(fd.get("sourceVmId"));
+  const vm = _rfVms.find(v => v.id === vmId);
+
   const payload = {
-    sourceHostId: Number(fd.get("sourceHostId")), targetHostId: Number(fd.get("targetHostId")),
-    restorePointPath: fd.get("restorePointPath"), destination: fd.get("destination"),
-    newName: fd.get("newName") || "", targetBackupId: fd.get("targetBackupId") || null,
+    sourceHostId: Number(fd.get("sourceHostId")) || (vm ? vm.hostId : 0),
+    targetHostId: Number(fd.get("targetHostId")),
+    restorePointPath: _rpChainPath || "",
+    destination: fd.get("destination"),
+    newName: fd.get("newName") || "",
+    targetBackupId: chosenBackupId || null,
     overwriteExisting: overwrite,
-    backupRunId: fd.get("backupRunId") ? Number(fd.get("backupRunId")) : null
+    backupRunId: fd.get("backupRunId") ? Number(fd.get("backupRunId")) : null,
+    mode,
+    sourceVmId: vmId || null,
+    sourceVmName: vm ? vm.name : null,
   };
+  if (!payload.restorePointPath) { toast(t("restore.no_restore_points"), "err"); return; }
   try { await api.post("/api/restore", payload); toast(t("toast.queued"), "ok"); closeModal(); location.hash = "#restores"; router(); }
   catch (e) { toast(e.message, "err"); }
 }

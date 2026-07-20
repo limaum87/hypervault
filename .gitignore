@@ -9,6 +9,11 @@ TestResults/
 appsettings.Local.json
 artifacts/
 
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
 # HyperVault Manager local runtime data (SQLite DB, data-protection keys)
 HyperVaultManager/data/
 HyperVaultManager/*.db

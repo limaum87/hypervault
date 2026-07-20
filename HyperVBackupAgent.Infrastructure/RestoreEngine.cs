@@ -16,6 +16,12 @@ public sealed class RestoreEngine : IRestoreEngine
     public async Task RestoreAsync(RestoreRequest request, CancellationToken cancellationToken = default)
     {
         var materialized = await _materializer.MaterializeAsync(request, cancellationToken);
-        await _hyperV.CreateVmFromDisksAsync(request.NewName, materialized.DiskPaths, request.OverwriteExisting, cancellationToken);
+        // CreateVm=false => "disk only / test" mode: mount the chain and materialize the
+        // restored VHD/X files into Destination, but do not create a Hyper-V VM. The disks
+        // are left in place, ready to be attached/mounted manually for inspection.
+        if (request.CreateVm)
+        {
+            await _hyperV.CreateVmFromDisksAsync(request.NewName, materialized.DiskPaths, request.OverwriteExisting, cancellationToken);
+        }
     }
 }

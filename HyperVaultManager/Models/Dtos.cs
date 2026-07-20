@@ -105,7 +105,10 @@ public record RestoreDto(
     string NewName,
     string? TargetBackupId,
     bool OverwriteExisting,
-    int? BackupRunId);
+    int? BackupRunId,
+    string Mode = "new_vm",
+    int? SourceVmId = null,
+    string? SourceVmName = null);
 
 // ---- Backup history / runs ----
 public record BackupRunViewDto(
@@ -165,7 +168,10 @@ public record RestoreRunViewDto(
     string? Message,
     DateTimeOffset QueuedAt,
     DateTimeOffset? StartedAt,
-    DateTimeOffset? CompletedAt);
+    DateTimeOffset? CompletedAt,
+    string Mode = "new_vm",
+    int? SourceVmId = null,
+    string? SourceVmName = null);
 
 // ---- Dashboard ----
 // ---- Auth / users ----

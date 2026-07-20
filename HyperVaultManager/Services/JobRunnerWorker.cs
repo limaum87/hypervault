@@ -137,7 +137,8 @@ public class JobRunnerWorker : BackgroundService
         await MarkRunning(db, run, stop);
         try
         {
-            var payload = new RestoreRequestPayload(run.RestorePointPath, run.Destination, run.NewName, run.OverwriteExisting, run.TargetBackupId);
+            var createVm = run.Mode != RestoreModes.DiskOnly;
+            var payload = new RestoreRequestPayload(run.RestorePointPath, run.Destination, run.NewName, run.OverwriteExisting, run.TargetBackupId, createVm);
             var agentJob = await _agent.EnqueueRestoreAsync(run.TargetHost, payload, stop);
             run.AgentJobId = agentJob.JobId;
             await Save(db, stop);

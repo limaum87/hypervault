@@ -14,7 +14,6 @@
   "nav.group_overview": "Overview",
   "nav.group_protection": "Protection",
   "nav.group_system": "System",
-
   "common.add": "Add",
   "common.edit": "Edit",
   "common.delete": "Delete",
@@ -50,7 +49,6 @@
   "common.none": "—",
   "common.never": "never",
   "common.unknown": "Unknown",
-
   "status.online": "Online",
   "status.offline": "Offline",
   "status.unknown": "Unknown",
@@ -59,7 +57,6 @@
   "status.succeeded": "Succeeded",
   "status.failed": "Failed",
   "status.canceled": "Canceled",
-
   "dashboard.title": "Dashboard",
   "dashboard.total_hosts": "Total hosts",
   "dashboard.online_hosts": "Hosts online",
@@ -72,7 +69,6 @@
   "dashboard.recent_backups": "Recent backups",
   "dashboard.recent_failures": "Recent failures",
   "dashboard.no_recent": "No recent activity.",
-
   "hosts.title": "Hyper-V Hosts",
   "hosts.add": "Add host",
   "hosts.edit": "Edit host",
@@ -90,7 +86,6 @@
   "hosts.sync_vms": "Sync VMs",
   "hosts.agent_version": "Agent version",
   "hosts.empty": "No hosts registered yet. Add your first Hyper-V host.",
-
   "vms.title": "Machines",
   "vms.host": "Host",
   "vms.state": "State",
@@ -113,7 +108,6 @@
   "vms.offline_sub": "Powered off",
   "vms.search_placeholder": "Search for machine name or machine ID...",
   "vms.type": "Type",
-
   "storages.title": "Storage Targets",
   "storages.add": "Add storage",
   "storages.type": "Type",
@@ -122,7 +116,6 @@
   "storages.types.local_path": "Local path",
   "storages.types.smb": "SMB share",
   "storages.empty": "No storages configured yet.",
-
   "jobs.title": "Backup Jobs",
   "jobs.add": "Add job",
   "jobs.host": "Host",
@@ -149,10 +142,13 @@
   "jobs.types.full": "Full",
   "jobs.types.incremental": "Incremental",
   "jobs.name": "Job name",
-
-  "days.sun": "Sun", "days.mon": "Mon", "days.tue": "Tue", "days.wed": "Wed",
-  "days.thu": "Thu", "days.fri": "Fri", "days.sat": "Sat",
-
+  "days.sun": "Sun",
+  "days.mon": "Mon",
+  "days.tue": "Tue",
+  "days.wed": "Wed",
+  "days.thu": "Thu",
+  "days.fri": "Fri",
+  "days.sat": "Sat",
   "backups.title": "Backup History",
   "backups.host": "Host",
   "backups.vm": "VM",
@@ -167,7 +163,6 @@
   "backups.empty": "No backup runs recorded yet.",
   "backups.agent_job": "Agent job",
   "backups.correlation": "Correlation",
-
   "verifications.title": "Verifications",
   "verifications.kind": "Kind",
   "verifications.target_path": "Target path",
@@ -181,7 +176,6 @@
   "verifications.select_job": "Select job",
   "verifications.job_hint": "Verifies the latest completed backup of this job.",
   "verifications.no_jobs": "Create a job first",
-
   "restore.title": "Restores",
   "restore.source_host": "Source host",
   "restore.target_host": "Target host",
@@ -194,7 +188,6 @@
   "restore.empty": "No restore runs yet.",
   "restore.new": "New restore",
   "restore.confirm": "Confirm restore: overwrite an existing VM?",
-
   "toast.success": "Done",
   "toast.error": "Error",
   "toast.created": "Created",
@@ -208,7 +201,6 @@
   "toast.user_created": "User created",
   "toast.user_deleted": "User deleted",
   "toast.network_error": "Network error",
-
   "auth.sign_in": "Sign in",
   "auth.sign_in_subtitle": "Sign in to your account",
   "auth.logout": "Sign out",
@@ -220,15 +212,34 @@
   "auth.change_password": "Change password",
   "auth.invalid": "Invalid username or password.",
   "auth.password_mismatch": "New passwords do not match.",
-
   "roles.admin": "Administrator",
   "roles.user": "User",
-
   "settings.title": "Settings",
   "settings.my_account": "My account",
   "settings.users": "Users",
   "settings.add_user": "Add user",
   "settings.edit_user": "Edit user",
   "settings.admin_only": "User management is available to administrators only.",
-  "settings.you": "you"
+  "settings.you": "you",
+  "restore.source_vm": "Source VM",
+  "restore.select_vm": "Select the VM you want to restore",
+  "restore.no_vms": "No VMs available. Add or sync a host with VMs first.",
+  "restore.restore_points": "Restore points",
+  "restore.no_restore_points": "No restore points found for this VM on its host.",
+  "restore.loading_restore_points": "Loading restore points…",
+  "restore.load_failed": "Failed to load restore points from the host.",
+  "restore.pick_point": "Choose the point to restore up to",
+  "restore.latest": "latest",
+  "restore.mode": "Restore mode",
+  "restore.mode.new_vm": "Create a new VM",
+  "restore.mode.new_vm_desc": "Materializes the disks and registers a new Hyper-V VM on the target host.",
+  "restore.mode.disk_only": "Disk only (for testing)",
+  "restore.mode.disk_only_desc": "Materializes the disk(s) into the destination and leaves them ready to mount. No VM is created.",
+  "restore.modes.new_vm": "New VM",
+  "restore.modes.disk_only": "Disk only",
+  "restore.disk_prefix": "Disk name prefix",
+  "restore.target_host_hint": "Where the restore will run and the VM/disk will be created.",
+  "restore.dest_hint_new_vm": "Folder where restored disks are materialized before VM creation.",
+  "restore.dest_hint_disk_only": "Folder where the restored disk(s) will be written and left ready to mount.",
+  "restore.chain_path": "Chain path"
 }

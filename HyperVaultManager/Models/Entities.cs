@@ -208,6 +208,12 @@ public class VerificationRun
     public DateTimeOffset? CompletedAt { get; set; }
 }
 
+public static class RestoreModes
+{
+    public const string NewVm = "new_vm";       // materialize disks + create a Hyper-V VM
+    public const string DiskOnly = "disk_only";  // materialize disks only, leave ready to mount (no VM)
+}
+
 /// <summary>A restore execution.</summary>
 public class RestoreRun
 {
@@ -217,6 +223,11 @@ public class RestoreRun
     public int SourceHostId { get; set; }
     public int TargetHostId { get; set; }
     public HyperVHost? TargetHost { get; set; }
+    /// <summary>Manager VM we are restoring (the owner of the chain). Nullable for free-form restores.</summary>
+    public int? SourceVmId { get; set; }
+    public string? SourceVmName { get; set; }
+    /// <summary>new_vm (default) or disk_only.</summary>
+    public string Mode { get; set; } = RestoreModes.NewVm;
     public string RestorePointPath { get; set; } = string.Empty;
     public string Destination { get; set; } = string.Empty;
     public string NewName { get; set; } = string.Empty;

@@ -219,7 +219,7 @@ public sealed record AgentHealthResult(string LiveStatus, string ReadyStatus, bo
 public sealed record VmSnapshot(string Id, string Name, string State, int Generation, long MemoryBytes, long DiskSizeBytes);
 
 public sealed record RestoreRequestPayload(
-    string RestorePoint, string Destination, string NewName, bool OverwriteExisting, string? TargetBackupId);
+    string RestorePoint, string Destination, string NewName, bool OverwriteExisting, string? TargetBackupId, bool CreateVm = true);
 
 public sealed record AgentJob(string JobId, string? Type, string Status, string? ResultPath, string? Error, string? Message)
 {

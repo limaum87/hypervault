@@ -117,6 +117,8 @@ using (var scope = app.Services.CreateScope())
 
     // Add new scheduling columns to the Jobs table if missing (existing DBs).
     EnsureJobsScheduleColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
+    // Add Mode + source VM columns to RestoreRuns if missing (existing DBs).
+    EnsureRestoreColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
 }
 
 static async Task WriteAuthStatusAsync(HttpContext ctx, int code, string errorCode, string message)
@@ -149,6 +151,30 @@ static void EnsureJobsScheduleColumns(ManagerDbContext db, Microsoft.Extensions.
         {
             db.Database.ExecuteSqlRaw($"ALTER TABLE Jobs ADD COLUMN \"{col}\" {ddl};");
             logger.LogInformation("Added column Jobs.{Col}", col);
+        }
+    }
+}
+
+// Adds the restore-mode columns introduced for the redesigned restore screen.
+static void EnsureRestoreColumns(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
+{
+    var existing = db.Database.SqlQueryRaw<string>(
+            "SELECT name FROM pragma_table_info('RestoreRuns')")
+        .ToHashSet();
+
+    var add = new (string Col, string Ddl)[]
+    {
+        ("Mode", "TEXT NOT NULL DEFAULT 'new_vm'"),
+        ("SourceVmId", "INTEGER NULL"),
+        ("SourceVmName", "TEXT NULL")
+    };
+
+    foreach (var (col, ddl) in add)
+    {
+        if (!existing.Contains(col))
+        {
+            db.Database.ExecuteSqlRaw($"ALTER TABLE RestoreRuns ADD COLUMN \"{col}\" {ddl};");
+            logger.LogInformation("Added column RestoreRuns.{Col}", col);
         }
     }
 }
@@ -731,11 +757,31 @@ api.MapGet("/restores", async (ManagerDbContext db) =>
 api.MapPost("/restore", async (RestoreDto dto, ManagerDbContext db, IJobQueue queue) =>
 {
     if (await db.Hosts.AllAsync(h => h.Id != dto.TargetHostId)) throw new InvalidOperationException($"Target host {dto.TargetHostId} not found");
+
+    // Resolve source host from the chosen VM when the caller omits it.
+    var sourceHostId = dto.SourceHostId;
+    var sourceVmName = dto.SourceVmName;
+    if (dto.SourceVmId is int vmId)
+    {
+        var vm = await db.VirtualMachines.FirstOrDefaultAsync(v => v.Id == vmId);
+        if (vm is null) throw new InvalidOperationException($"VM {vmId} not found");
+        if (sourceHostId <= 0) sourceHostId = vm.HostId;
+        if (string.IsNullOrWhiteSpace(sourceVmName)) sourceVmName = vm.Name;
+    }
+    if (sourceHostId <= 0) sourceHostId = dto.TargetHostId; // best-effort fallback
+
+    var mode = string.IsNullOrWhiteSpace(dto.Mode) ? RestoreModes.NewVm : dto.Mode.Trim().ToLowerInvariant();
+    if (mode != RestoreModes.NewVm && mode != RestoreModes.DiskOnly)
+        throw new ArgumentException($"Unknown restore mode '{dto.Mode}'. Expected 'new_vm' or 'disk_only'.");
+
+    // NewName identifies the restored VM (new_vm) or prefixes the materialized disk files (disk_only).
     if (!dto.OverwriteExisting && string.IsNullOrWhiteSpace(dto.NewName))
         throw new ArgumentException("NewName is required when not overwriting (safety check)");
+
     var r = new RestoreRun
     {
-        BackupRunId = dto.BackupRunId, SourceHostId = dto.SourceHostId, TargetHostId = dto.TargetHostId,
+        BackupRunId = dto.BackupRunId, SourceHostId = sourceHostId, TargetHostId = dto.TargetHostId,
+        SourceVmId = dto.SourceVmId, SourceVmName = sourceVmName, Mode = mode,
         RestorePointPath = dto.RestorePointPath, Destination = dto.Destination, NewName = dto.NewName,
         TargetBackupId = dto.TargetBackupId, OverwriteExisting = dto.OverwriteExisting,
         Status = RunStatuses.Queued, QueuedAt = DateTimeOffset.UtcNow
@@ -854,7 +900,8 @@ static class Map
     public static RestoreRunViewDto Restore(RestoreRun r) => new(
         r.Id, r.BackupRunId, r.SourceHostId, r.TargetHostId, r.TargetHost?.Name ?? "", r.NewName,
         r.Destination, r.Status, r.AgentJobId, r.CorrelationId, r.Error, r.Message,
-        r.QueuedAt, r.StartedAt, r.CompletedAt);
+        r.QueuedAt, r.StartedAt, r.CompletedAt,
+        r.Mode, r.SourceVmId, r.SourceVmName);
 
     public static MeDto Me(AppUser u) => new(u.Id, u.Username, u.Role, u.Enabled, u.CreatedAt, u.LastLoginAt);
 }
