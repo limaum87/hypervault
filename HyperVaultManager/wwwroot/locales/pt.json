@@ -242,5 +242,21 @@
   "restore.dest_hint_new_vm": "Pasta onde os discos restaurados são materializados antes de criar a VM.",
   "restore.dest_hint_disk_only": "Pasta onde o(s) disco(s) restaurado(s) serão gravados e deixados prontos para montar.",
   "restore.dest_auto_note": "Sugerido a partir do storage do backup; edite livremente.",
-  "restore.chain_path": "Caminho da chain"
+  "restore.chain_path": "Caminho da chain",
+  "restore.mode.file_level": "Restaurar arquivo pontual",
+  "restore.mode.file_level_desc": "Monta o disco somente leitura e abre um explorador de arquivos para baixar arquivos específicos (guests Windows).",
+  "restore.modes.file_level": "Arquivo pontual",
+  "restore.flr.title": "Explorar arquivos do backup",
+  "restore.flr.open": "Explorar arquivos",
+  "restore.flr.mounting": "Montando disco somente leitura…",
+  "restore.flr.mount_error": "Não foi possível montar o disco para restore.",
+  "restore.flr.volumes": "Volume",
+  "restore.flr.expires_in": "Expira em",
+  "restore.flr.expired": "Sessão expirada",
+  "restore.flr.close": "Fechar sessão",
+  "restore.flr.empty": "Pasta vazia",
+  "restore.flr.download": "Baixar",
+  "restore.flr.session_expired_msg": "A sessão expirou. Crie uma nova para continuar navegando.",
+  "restore.flr.new_session": "Nova sessão",
+  "restore.flr.root": "Raiz"
 }

@@ -110,6 +110,14 @@ public record RestoreDto(
     int? SourceVmId = null,
     string? SourceVmName = null);
 
+// ---- File-level restore (FLR) ----
+// The manager only needs the host that owns the chain and the restore point.
+// ttlMinutes is optional (agent clamps 5..1440, default 60).
+public record FlrSessionCreateDto(
+    string RestorePointPath,
+    string? TargetBackupId = null,
+    int? TtlMinutes = null);
+
 // ---- Backup history / runs ----
 public record BackupRunViewDto(
     int Id,

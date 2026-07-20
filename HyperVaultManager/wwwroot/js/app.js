@@ -141,7 +141,9 @@ function toast(msg, kind = "ok") {
 }
 
 /* ---------- modal ---------- */
+let _modalCloseHook = null; // optional cleanup invoked once when the modal closes (e.g. FLR session teardown)
 function openModal(titleKey, bodyHtml, footHtml = "") {
+  _modalCloseHook = null; // opening any modal clears a stale hook unless re-set by the caller
   $("#modalTitle").textContent = t(titleKey);
   const body = $("#modalBody"); body.innerHTML = bodyHtml;
   i18n.apply(body);
@@ -152,8 +154,11 @@ function openModal(titleKey, bodyHtml, footHtml = "") {
   const f = body.querySelector("input,select,textarea"); if (f) setTimeout(() => f.focus(), 30);
 }
 function closeModal() {
+  const hook = _modalCloseHook;
+  _modalCloseHook = null;
   $("#modalRoot").classList.add("hidden");
   $("#modalRoot").setAttribute("aria-hidden", "true");
+  if (hook) { try { hook(); } catch (_) { /* best-effort cleanup */ } }
 }
 document.addEventListener("click", (e) => { if (e.target.matches("[data-close]")) closeModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
@@ -1010,6 +1015,7 @@ async function restoreForm(prefill = {}) {
   const hostOpts = hosts.map(h => `<option value="${h.id}" ${prefill.targetHostId === h.id ? "selected" : ""}>${esc(h.name)}</option>`).join("");
   const newVmChecked = (prefill.mode || "new_vm") === "new_vm" ? "checked" : "";
   const diskChecked = prefill.mode === "disk_only" ? "checked" : "";
+  const fileChecked = prefill.mode === "file_level" ? "checked" : "";
 
   const body = `<form id="rf" class="form-grid">
     <div class="field full"><div class="warn-box" data-i18n="restore.safety_warning">${t("restore.safety_warning")}</div></div>
@@ -1038,21 +1044,26 @@ async function restoreForm(prefill = {}) {
           <span class="rc-title">${IC("hard-drive", 16)} <span data-i18n="restore.mode.disk_only">${t("restore.mode.disk_only")}</span></span>
           <span class="rc-desc" data-i18n="restore.mode.disk_only_desc">${t("restore.mode.disk_only_desc")}</span>
         </label>
+        <label class="radio-card">
+          <input type="radio" name="mode" value="file_level" ${fileChecked} onchange="toggleRestoreMode()" />
+          <span class="rc-title">${IC("folder", 16)} <span data-i18n="restore.mode.file_level">${t("restore.mode.file_level")}</span></span>
+          <span class="rc-desc" data-i18n="restore.mode.file_level_desc">${t("restore.mode.file_level_desc")}</span>
+        </label>
       </div>
     </div>
 
-    <div class="field">
+    <div class="field rf-vmops">
       <label data-i18n="restore.target_host">${t("restore.target_host")}</label>
       <select name="targetHostId" id="rfTargetHost" required>${hostOpts}</select>
       <span class="hint" data-i18n="restore.target_host_hint">${t("restore.target_host_hint")}</span>
     </div>
 
-    <div class="field">
+    <div class="field rf-vmops">
       <label id="rfNewNameLabel" data-i18n="restore.new_name">${t("restore.new_name")}</label>
       <input name="newName" id="rfNewName" required oninput="this.dataset.touched='1'" />
     </div>
 
-    <div class="field full">
+    <div class="field full rf-vmops">
       <label data-i18n="restore.destination">${t("restore.destination")}</label>
       <input name="destination" id="rfDestination" required oninput="this.dataset.touched='1'" />
       <span class="hint" id="rfDestHint"></span>
@@ -1067,7 +1078,7 @@ async function restoreForm(prefill = {}) {
   </form>`;
 
   const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
-    <button class="btn primary" onclick="submitRestore()"><span data-i18n="common.restore">${t("common.restore")}</span></button>`;
+    <button class="btn primary" onclick="submitRestore()"><span id="rfSubmitLabel" data-i18n="common.restore">${t("common.restore")}</span></button>`;
   openModal("restore.new", body, foot);
 
   _rpList = [];
@@ -1181,7 +1192,13 @@ function toggleRestoreMode() {
   const f = $("#rf"); if (!f) return;
   const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
   const diskOnly = mode === "disk_only";
-  $$('#rf .rf-newvm-only').forEach(el => el.style.display = diskOnly ? 'none' : '');
+  const fileLevel = mode === "file_level";
+  $$('#rf .rf-newvm-only').forEach(el => el.style.display = (diskOnly || fileLevel) ? 'none' : '');
+  $$('#rf .rf-vmops').forEach(el => el.style.display = fileLevel ? 'none' : '');
+  const submitLabel = $("#rfSubmitLabel");
+  if (submitLabel) submitLabel.textContent = fileLevel ? t("restore.flr.open") : t("common.restore");
+  if (fileLevel) return; // no destination / disk name needed for file-level restore
+
   const vm = _rfVms.find(v => v.id === Number(f.sourceVmId.value));
   const baseName = vm ? vm.name : "restored";
   _rfStorageBase = resolveStorageBase(_rpChainPath); // re-resolve in case the point changed
@@ -1205,11 +1222,26 @@ function toggleRestoreMode() {
 
 async function submitRestore() {
   const f = $("#rf");
+  const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
+
+  // File-level restore is an interactive session (mount read-only + browse),
+  // not a queued job. Validate only the restore point, then open the explorer.
+  if (mode === "file_level") {
+    const chosen = f.querySelector('input[name="rpChoice"]:checked');
+    if (!chosen || !_rpChainPath) { toast(t("restore.no_restore_points"), "err"); return; }
+    const fd = new FormData(f);
+    const vmId = Number(fd.get("sourceVmId"));
+    const vm = _rfVms.find(v => v.id === vmId);
+    const hostId = vm ? vm.hostId : Number(fd.get("sourceHostId"));
+    if (!hostId) { toast(t("restore.no_vms"), "err"); return; }
+    await openFlrExplorer(hostId, _rpChainPath, chosen.value);
+    return;
+  }
+
   if (!f.reportValidity()) return;
   const fd = new FormData(f);
-  const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
   const overwrite = f.overwriteExisting.checked;
-  if (mode === "new_vm" && overwrite && !await confirmModal(t("restore.confirm"), { titleKey: "restore.title", confirmKey: "common.restore" })) { return; }
+  if (mode === "new_vm" && overwrite && !await confirmModal(t("restore.confirm"), { titleKey: "restore.title", confirmKey: "common.restore", danger: true })) { return; }
 
   const chosen = f.querySelector('input[name="rpChoice"]:checked');
   const chosenBackupId = chosen ? chosen.value : null;
@@ -1233,6 +1265,190 @@ async function submitRestore() {
   try { await api.post("/api/restore", payload); toast(t("toast.queued"), "ok"); closeModal(); location.hash = "#restores"; router(); }
   catch (e) { toast(e.message, "err"); }
 }
+
+/* ===================================================================== */
+/* FILE-LEVEL RESTORE (FLR) explorer                                       */
+/* Mounts the selected chain read-only on the owning agent and lets the    */
+/* operator browse volumes/folders and download individual files. The      */
+/* browser only talks to the manager, which proxies to the agent.          */
+/* ===================================================================== */
+let _flr = null;      // { hostId, sessionId, expiresAt, volumes, volumeId, path:[], entries:[], restorePointPath, targetBackupId }
+let _flrTimer = null; // expiry countdown interval
+
+async function openFlrExplorer(hostId, restorePointPath, targetBackupId) {
+  let cancelled = false;
+  openModal("restore.flr.title", `<div class="loader" style=\"padding:30px\"><span class="spinner"></span><span data-i18n="restore.flr.mounting">${t("restore.flr.mounting")}</span></div>`, "");
+  _modalCloseHook = () => { cancelled = true; };
+  try {
+    const session = await api.post(`/api/hosts/${hostId}/flr/sessions`, { restorePointPath, targetBackupId: targetBackupId || null });
+    if (cancelled) {
+      // Operator closed the modal while the disk was being mounted; tear it down.
+      if (session && session.sessionId) api.del(`/api/hosts/${hostId}/flr/sessions/${encodeURIComponent(session.sessionId)}`).catch(() => {});
+      return;
+    }
+    if (!session || !session.sessionId || !Array.isArray(session.volumes) || !session.volumes.length) {
+      throw new Error(t("restore.flr.mount_error"));
+    }
+    _flr = {
+      hostId, sessionId: session.sessionId, expiresAt: session.expiresAt,
+      volumes: session.volumes, volumeId: session.volumes[0].volumeId, path: [], entries: [],
+      restorePointPath, targetBackupId: targetBackupId || null
+    };
+    renderFlrExplorer();
+  } catch (e) {
+    if (cancelled) return;
+    closeModal();
+    toast(e.message || t("restore.flr.mount_error"), "err");
+  }
+}
+
+function renderFlrExplorer() {
+  const s = _flr; if (!s) return;
+  const volOpts = s.volumes.map(v => `<option value="${esc(v.volumeId)}" ${v.volumeId === s.volumeId ? "selected" : ""}>${esc(volLabel(v))}</option>`).join("");
+  const body = `
+    <div class="flr-bar">
+      <div class="flr-meta">
+        <select id="flrVolume" onchange="flrVolumeChanged()">${volOpts}</select>
+        <span class="flr-expires" id="flrExpires"></span>
+      </div>
+      <button class="btn ghost sm" onclick="closeFlrExplorerAndModal()">${IC("x", 14)} <span data-i18n="restore.flr.close">${t("restore.flr.close")}</span></button>
+    </div>
+    <div class="flr-crumbs" id="flrCrumbs">${flrBreadcrumb()}</div>
+    <div class="flr-list" id="flrList">${pageLoader()}</div>`;
+  const foot = `<button class="btn ghost" data-close data-i18n="restore.flr.close">${t("restore.flr.close")}</button>`;
+  openModal("restore.flr.title", body, foot);
+  _modalCloseHook = closeFlrExplorer; // tear the session down on Esc/backdrop/close
+  flrStartTimer();
+  flrLoadDir();
+}
+
+function volLabel(v) {
+  const parts = [];
+  if (v && v.label) parts.push(v.label);
+  if (v && v.fileSystem) parts.push(`(${v.fileSystem})`);
+  if (!parts.length) parts.push((v && v.volumeId) || "Volume");
+  return `${parts.join(" ")} · ${fmtBytes(v && v.sizeBytes)}`;
+}
+
+function flrBreadcrumb() {
+  const s = _flr; if (!s) return "";
+  let html = `<span class="crumb" onclick="flrGoto(-1)">${IC("hard-drive", 13)} <span data-i18n="restore.flr.root">${t("restore.flr.root")}</span></span>`;
+  s.path.forEach((seg, i) => {
+    html += `<span class="crumb-sep">›</span><span class="crumb" onclick="flrGoto(${i})">${esc(seg)}</span>`;
+  });
+  return html;
+}
+
+async function flrLoadDir() {
+  const box = $("#flrList"); if (!box || !_flr) return;
+  box.innerHTML = pageLoader();
+  const pathStr = _flr.path.join("\\");
+  const url = `/api/hosts/${_flr.hostId}/flr/sessions/${encodeURIComponent(_flr.sessionId)}/ls?volumeId=${encodeURIComponent(_flr.volumeId)}${pathStr ? `&path=${encodeURIComponent(pathStr)}` : ""}`;
+  try {
+    const entries = await api.get(url);
+    _flr.entries = Array.isArray(entries) ? entries : [];
+    flrRenderList();
+  } catch (e) {
+    if (e && e.status === 404) { flrShowExpired(); return; }
+    box.innerHTML = `<div class="empty">${IC("alert-triangle", 26)}<div>${esc((e && e.message) || t("toast.network_error"))}</div></div>`;
+    paint(box);
+  }
+}
+
+function flrRenderList() {
+  const box = $("#flrList"); if (!box || !_flr) return;
+  const s = _flr;
+  const entries = s.entries || [];
+  let html = "";
+  if (s.path.length) html += `<div class="flr-row flr-up" onclick="flrUp()">${IC("arrow-up", 15)} <span class="flr-name muted">..</span></div>`;
+  if (!entries.length && !s.path.length) {
+    box.innerHTML = `<div class="empty">${IC("folder", 28)}<div data-i18n="restore.flr.empty">${t("restore.flr.empty")}</div></div>`;
+    paint(box);
+    return;
+  }
+  for (const e of entries) {
+    if (e.isDirectory) {
+      html += `<div class="flr-row" onclick="flrOpenFolder(this.dataset.name)" data-name="${esc(e.name)}">${IC("folder", 16)} <span class="flr-name">${esc(e.name)}</span></div>`;
+    } else {
+      const url = flrFileUrl(e.relativePath);
+      html += `<div class="flr-row file">
+        ${IC("file", 16)}
+        <span class="flr-name" title="${esc(e.name)}">${esc(e.name)}</span>
+        <span class="flr-size">${fmtBytes(e.sizeBytes)}</span>
+        <span class="flr-date">${fmtDate(e.lastWriteTimeUtc)}</span>
+        <a class="btn sm icon-only" href="${url}" download="${esc(e.name)}" title="${esc(t("restore.flr.download"))}" onclick="event.stopPropagation()">${IC("download", 14)}</a>
+      </div>`;
+    }
+  }
+  box.innerHTML = html;
+  paint(box);
+}
+
+function flrFileUrl(relPath) {
+  const s = _flr; if (!s || !relPath) return "#";
+  return `/api/hosts/${s.hostId}/flr/sessions/${encodeURIComponent(s.sessionId)}/get?volumeId=${encodeURIComponent(s.volumeId)}&path=${encodeURIComponent(relPath)}`;
+}
+
+function flrGoto(i) {
+  if (!_flr) return;
+  _flr.path = i < 0 ? [] : _flr.path.slice(0, i + 1);
+  const c = $("#flrCrumbs"); if (c) c.innerHTML = flrBreadcrumb();
+  flrLoadDir();
+}
+function flrUp() {
+  if (!_flr || !_flr.path.length) return;
+  _flr.path.pop();
+  const c = $("#flrCrumbs"); if (c) c.innerHTML = flrBreadcrumb();
+  flrLoadDir();
+}
+function flrOpenFolder(name) {
+  if (!_flr || !name) return;
+  _flr.path.push(name);
+  const c = $("#flrCrumbs"); if (c) c.innerHTML = flrBreadcrumb();
+  flrLoadDir();
+}
+function flrVolumeChanged() {
+  if (!_flr) return;
+  const sel = $("#flrVolume");
+  _flr.volumeId = sel ? sel.value : _flr.volumeId;
+  _flr.path = [];
+  const c = $("#flrCrumbs"); if (c) c.innerHTML = flrBreadcrumb();
+  flrLoadDir();
+}
+
+function flrStartTimer() {
+  if (_flrTimer) clearInterval(_flrTimer);
+  flrTick();
+  _flrTimer = setInterval(flrTick, 15000);
+}
+function flrTick() {
+  const el = $("#flrExpires"); if (!el || !_flr) return;
+  const ms = new Date(_flr.expiresAt).getTime() - Date.now();
+  if (isNaN(ms) || ms <= 0) { el.textContent = t("restore.flr.expired"); el.classList.add("danger"); return; }
+  const mins = Math.max(0, Math.floor(ms / 60000));
+  el.textContent = `${t("restore.flr.expires_in")} ${mins}m`;
+  el.classList.remove("danger");
+}
+
+function flrShowExpired() {
+  const box = $("#flrList"); if (!box || !_flr) return;
+  box.innerHTML = `<div class="empty">${IC("alert-triangle", 28)}<div data-i18n="restore.flr.session_expired_msg">${t("restore.flr.session_expired_msg")}</div>
+    <button class="btn primary sm" style="margin-top:12px" onclick="flrRecreate()"><span data-i18n="restore.flr.new_session">${t("restore.flr.new_session")}</span></button></div>`;
+  paint(box);
+}
+function flrRecreate() {
+  if (!_flr) return;
+  const args = { hostId: _flr.hostId, restorePointPath: _flr.restorePointPath, targetBackupId: _flr.targetBackupId };
+  closeFlrExplorer();
+  openFlrExplorer(args.hostId, args.restorePointPath, args.targetBackupId);
+}
+
+function closeFlrExplorer() {
+  if (_flrTimer) { clearInterval(_flrTimer); _flrTimer = null; }
+  const s = _flr; _flr = null;
+  if (s && s.sessionId) api.del(`/api/hosts/${s.hostId}/flr/sessions/${encodeURIComponent(s.sessionId)}`).catch(() => {});
+}
+function closeFlrExplorerAndModal() { closeFlrExplorer(); closeModal(); }
 
 /* ===================================================================== */
 /* SETTINGS (account + user management)                                   */

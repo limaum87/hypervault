@@ -71,6 +71,17 @@ builder.Services.AddHttpClient("agent")
     })
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(20));
 
+// Long-running HTTP client for File-Level Restore: materializing a chain +
+// read-only VHDX mount and streaming downloads can take minutes, so it must
+// not be bound by the default 20s timeout. Streaming downloads also need
+// HttpCompletionOption.ResponseHeadersRead (see AgentClient.GetFlrFileAsync).
+builder.Services.AddHttpClient("agent-long")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    })
+    .ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
+
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -790,6 +801,92 @@ api.MapPost("/restore", async (RestoreDto dto, ManagerDbContext db, IJobQueue qu
     queue.Enqueue(new RestoreJobRequest(r.Id));
     return Results.Accepted($"/api/restores/{r.Id}", new { r.Id });
 });
+
+// ---------- FILE-LEVEL RESTORE (FLR) proxy ----------
+// The browser only ever talks to the manager. The manager adds the bearer token
+// and forwards to the agent that owns the chain. Only volumeId + relative path
+// are accepted for browse/download; the agent enforces confinement.
+api.MapPost("/hosts/{id:int}/flr/sessions", async (int id, FlrSessionCreateDto dto, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    if (string.IsNullOrWhiteSpace(dto.RestorePointPath))
+        throw new ArgumentException("RestorePointPath is required.");
+    var session = await agent.CreateFlrSessionAsync(host, dto.RestorePointPath, dto.TargetBackupId, dto.TtlMinutes, ct)
+        ?? throw new InvalidOperationException("Agent did not return a file-level restore session.");
+    return Results.Ok(session);
+});
+
+api.MapGet("/hosts/{id:int}/flr/sessions/{sessionId}", async (int id, string sessionId, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    try { return Results.Ok(await agent.GetFlrSessionAsync(host, sessionId, ct)); }
+    catch (AgentCallException ex) when (ex.StatusCode == 404) { return Results.NotFound(new { code = "session_expired" }); }
+});
+
+api.MapGet("/hosts/{id:int}/flr/sessions/{sessionId}/ls", async (int id, string sessionId, HttpContext ctx, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    var volumeId = ctx.Request.Query["volumeId"].ToString();
+    var path = ctx.Request.Query["path"].ToString();
+    if (string.IsNullOrWhiteSpace(volumeId))
+        throw new ArgumentException("volumeId is required.");
+    try
+    {
+        var entries = await agent.ListFlrEntriesAsync(host, sessionId, volumeId, string.IsNullOrEmpty(path) ? null : path, ct);
+        return Results.Ok(entries);
+    }
+    catch (AgentCallException ex) when (ex.StatusCode == 404)
+    {
+        return Results.NotFound(new { code = "session_expired", message = "File-level restore session expired." });
+    }
+});
+
+// Streams a file from the agent to the browser without buffering it in the
+// manager. Propagates Range / Content-Range / Content-Length / Content-Type /
+// Content-Disposition so the browser can do resumable downloads with the right
+// filename. A 404 upstream (expired session) is forwarded as 404.
+api.MapGet("/hosts/{id:int}/flr/sessions/{sessionId}/get", async (int id, string sessionId, HttpContext ctx, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    var volumeId = ctx.Request.Query["volumeId"].ToString();
+    var path = ctx.Request.Query["path"].ToString();
+    if (string.IsNullOrWhiteSpace(volumeId) || string.IsNullOrWhiteSpace(path))
+        throw new ArgumentException("volumeId and path are required.");
+    var range = ctx.Request.Headers.Range.ToString();
+    var upstream = await agent.GetFlrFileAsync(host, sessionId, volumeId, path, string.IsNullOrWhiteSpace(range) ? null : range, ct);
+    try
+    {
+        ctx.Response.StatusCode = (int)upstream.StatusCode;
+        CopyFlrHeader(upstream, ctx.Response.Headers, "Content-Type");
+        CopyFlrHeader(upstream, ctx.Response.Headers, "Content-Length");
+        CopyFlrHeader(upstream, ctx.Response.Headers, "Content-Range");
+        CopyFlrHeader(upstream, ctx.Response.Headers, "Accept-Ranges");
+        CopyFlrHeader(upstream, ctx.Response.Headers, "Content-Disposition");
+        CopyFlrHeader(upstream, ctx.Response.Headers, "Last-Modified");
+        await upstream.Content.CopyToAsync(ctx.Response.Body, ct);
+    }
+    finally { upstream.Dispose(); }
+});
+
+api.MapDelete("/hosts/{id:int}/flr/sessions/{sessionId}", async (int id, string sessionId, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+        ?? throw new InvalidOperationException($"Host {id} not found");
+    try { await agent.CloseFlrSessionAsync(host, sessionId, ct); }
+    catch (AgentCallException ex) when (ex.StatusCode == 404) { /* already closed/expired */ }
+    return Results.NoContent();
+});
+
+// Copies a response header from either the content or message header collection.
+static void CopyFlrHeader(HttpResponseMessage src, IHeaderDictionary dst, string name)
+{
+    if ((src.Content?.Headers.TryGetValues(name, out var values) ?? false) || src.Headers.TryGetValues(name, out values))
+        dst[name] = values.ToArray();
+}
 
 // ---------- DASHBOARD ----------
 api.MapGet("/dashboard", async (ManagerDbContext db) =>

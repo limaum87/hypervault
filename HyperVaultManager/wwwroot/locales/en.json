@@ -242,5 +242,21 @@
   "restore.dest_hint_new_vm": "Folder where restored disks are materialized before VM creation.",
   "restore.dest_hint_disk_only": "Folder where the restored disk(s) will be written and left ready to mount.",
   "restore.dest_auto_note": "Derived from the backup's storage; feel free to edit.",
-  "restore.chain_path": "Chain path"
+  "restore.chain_path": "Chain path",
+  "restore.mode.file_level": "Restore single file",
+  "restore.mode.file_level_desc": "Mounts the disk read-only and opens a file browser to download specific files (Windows guests).",
+  "restore.modes.file_level": "Single file",
+  "restore.flr.title": "Browse backup files",
+  "restore.flr.open": "Browse files",
+  "restore.flr.mounting": "Mounting disk read-only…",
+  "restore.flr.mount_error": "Could not mount the disk for restore.",
+  "restore.flr.volumes": "Volume",
+  "restore.flr.expires_in": "Expires in",
+  "restore.flr.expired": "Session expired",
+  "restore.flr.close": "Close session",
+  "restore.flr.empty": "Empty folder",
+  "restore.flr.download": "Download",
+  "restore.flr.session_expired_msg": "The session expired. Create a new one to keep browsing.",
+  "restore.flr.new_session": "New session",
+  "restore.flr.root": "Root"
 }

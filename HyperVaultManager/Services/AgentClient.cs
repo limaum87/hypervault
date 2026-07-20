@@ -111,8 +111,97 @@ public class AgentClient
         resp.EnsureSuccessStatusCode();
     }
 
+    // ---- File-Level Restore (FLR) ----
+    // These calls use the "agent-long" client because creating a session
+    // (materialize + read-only mount) and streaming downloads can exceed the
+    // default 20s timeout. The agent validates that paths stay inside the
+    // mounted volume; the manager only forwards volumeId + relative path.
+    public async Task<JsonObject?> CreateFlrSessionAsync(HyperVHost host, string restorePoint, string? targetBackupId, int? ttlMinutes, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?> { ["restorePoint"] = restorePoint };
+        if (!string.IsNullOrWhiteSpace(targetBackupId)) body["targetBackupId"] = targetBackupId;
+        if (ttlMinutes is int ttl) body["ttlMinutes"] = ttl;
+        return await PostJsonLongAsync<JsonObject>($"{BuildBaseUrl(host)}/restore/flr/sessions", host, body, ct).ConfigureAwait(false);
+    }
+
+    public async Task<JsonObject?> GetFlrSessionAsync(HyperVHost host, string sessionId, CancellationToken ct = default)
+        => await GetJsonLongAsync<JsonObject>($"{BuildBaseUrl(host)}/restore/flr/sessions/{Uri.EscapeDataString(sessionId)}", host, ct).ConfigureAwait(false);
+
+    public async Task<JsonArray?> ListFlrEntriesAsync(HyperVHost host, string sessionId, string volumeId, string? relativePath, CancellationToken ct = default)
+    {
+        var query = $"?volumeId={Uri.EscapeDataString(volumeId)}";
+        if (!string.IsNullOrEmpty(relativePath)) query += $"&path={Uri.EscapeDataString(relativePath)}";
+        return await GetJsonLongAsync<JsonArray>($"{BuildBaseUrl(host)}/restore/flr/sessions/{Uri.EscapeDataString(sessionId)}/ls{query}", host, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Returns the agent's streaming response for a file. The caller is
+    /// responsible for disposing the <see cref="HttpResponseMessage"/> and for
+    /// checking <see cref="HttpResponseMessage.IsSuccessStatusCode"/> (a 404
+    /// means the session expired). HTTP Range is forwarded when present.</summary>
+    public async Task<HttpResponseMessage> GetFlrFileAsync(HyperVHost host, string sessionId, string volumeId, string relativePath, string? rangeHeader, CancellationToken ct = default)
+    {
+        var client = CreateLongClient();
+        var url = $"{BuildBaseUrl(host)}/restore/flr/sessions/{Uri.EscapeDataString(sessionId)}/get?volumeId={Uri.EscapeDataString(volumeId)}&path={Uri.EscapeDataString(relativePath)}";
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        ApplyAuth(req, host);
+        if (!string.IsNullOrWhiteSpace(rangeHeader))
+            req.Headers.TryAddWithoutValidation("Range", rangeHeader);
+        return await SendStreamingAsync(client, req, host, ct).ConfigureAwait(false);
+    }
+
+    public async Task CloseFlrSessionAsync(HyperVHost host, string sessionId, CancellationToken ct = default)
+    {
+        var client = CreateLongClient();
+        using var req = new HttpRequestMessage(HttpMethod.Delete, $"{BuildBaseUrl(host)}/restore/flr/sessions/{Uri.EscapeDataString(sessionId)}");
+        ApplyAuth(req, host);
+        using var resp = await SendStreamingAsync(client, req, host, ct).ConfigureAwait(false);
+        // 404 is fine: the session was already closed or expired on its own.
+        // Transport-level failures still surface as AgentCallException.
+    }
+
     // ---- helpers ----
     private HttpClient CreateClient() => _factory.CreateClient("agent");
+    private HttpClient CreateLongClient() => _factory.CreateClient("agent-long");
+
+    /// <summary>Like <see cref="SendAsync"/> but reads headers only, so large
+    /// FLR downloads and long materialization responses are not buffered in
+    /// memory and are not bound by the client read timeout.</summary>
+    private async Task<HttpResponseMessage> SendStreamingAsync(HttpClient client, HttpRequestMessage req, HyperVHost host, CancellationToken ct)
+    {
+        try
+        {
+            return await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AgentCallException(0, $"Agent '{host.Name}' is unreachable: {ex.Message}");
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !ct.IsCancellationRequested)
+        {
+            throw new AgentCallException(0, $"Agent '{host.Name}' timed out or is unreachable.");
+        }
+    }
+
+    private async Task<T?> GetJsonLongAsync<T>(string url, HyperVHost host, CancellationToken ct)
+    {
+        var client = CreateLongClient();
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        ApplyAuth(req, host);
+        using var resp = await SendStreamingAsync(client, req, host, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(resp, host).ConfigureAwait(false);
+        return await resp.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false);
+    }
+
+    private async Task<T?> PostJsonLongAsync<T>(string url, HyperVHost host, object body, CancellationToken ct)
+    {
+        var client = CreateLongClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        ApplyAuth(req, host);
+        req.Content = new StringContent(JsonSerializer.Serialize(body, Json), Encoding.UTF8, "application/json");
+        using var resp = await SendStreamingAsync(client, req, host, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(resp, host).ConfigureAwait(false);
+        return await resp.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false);
+    }
 
     private static void ApplyAuth(HttpRequestMessage req, HyperVHost host)
     {

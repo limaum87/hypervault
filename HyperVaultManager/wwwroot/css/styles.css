@@ -373,3 +373,29 @@ textarea { resize: vertical; min-height: 70px; padding: 9px 11px; height: auto; 
 .radio-card input:checked ~ .rc-title { color: var(--accent); }
 .radio-card .rc-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
 .radio-card .rc-desc { font-size: 11.5px; color: var(--text-mute); line-height: 1.35; }
+
+/* ---- File-Level Restore (FLR) explorer ---- */
+.flr-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.flr-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.flr-meta select { max-width: 360px; }
+.flr-expires { font-size: 12px; color: var(--text-dim); font-family: var(--mono); }
+.flr-expires.danger { color: var(--err); font-weight: 600; }
+.flr-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-soft); margin-bottom: 8px; font-size: 12.5px; }
+.flr-crumbs .crumb { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 6px; cursor: pointer; color: var(--text-dim); }
+.flr-crumbs .crumb:hover { background: var(--panel); color: var(--accent); }
+.flr-crumbs .crumb-sep { color: var(--text-mute); padding: 0 1px; }
+.flr-list { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); max-height: 46vh; overflow-y: auto; }
+.flr-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; transition: background .1s ease; }
+.flr-row:last-child { border-bottom: none; }
+.flr-row:hover { background: var(--info-bg); }
+.flr-row.flr-up { color: var(--text-mute); }
+.flr-row .flr-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flr-row.file { cursor: default; }
+.flr-row.file:hover { background: var(--bg-soft); }
+.flr-row .flr-size { flex: 0 0 auto; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); min-width: 64px; text-align: right; }
+.flr-row .flr-date { flex: 0 0 auto; font-size: 11.5px; color: var(--text-mute); }
+.flr-row .flr-name.muted { color: var(--text-mute); }
+@media (max-width: 720px) {
+  .flr-row .flr-date { display: none; }
+  .flr-meta select { max-width: 100%; }
+}
