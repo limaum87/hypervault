@@ -116,7 +116,6 @@
       <Environment Id="EnvBackupRoot" Name="HyperVBackupAgent__BackupRoot" Value="[BACKUP_ROOT]" Action="set" System="yes" Part="all" />
       <Environment Id="EnvHyperVProvider" Name="HyperVBackupAgent__HyperVProvider" Value="PowerShell" Action="set" System="yes" Part="all" />
       <Environment Id="EnvRctProvider" Name="HyperVBackupAgent__RctProvider" Value="Native" Action="set" System="yes" Part="all" />
-      <Environment Id="EnvAllowedPathRoot" Name="HyperVBackupAgent__AllowedPathRoots__0" Value="[BACKUP_ROOT]" Action="set" System="yes" Part="all" />
       <Environment Id="EnvApiConfigureKestrel" Name="HyperVBackupAgent__Api__ConfigureKestrel" Value="true" Action="set" System="yes" Part="all" />
       <Environment Id="EnvApiHttpPort" Name="HyperVBackupAgent__Api__HttpPort" Value="5080" Action="set" System="yes" Part="all" />
       <Environment Id="EnvApiHttpsPort" Name="HyperVBackupAgent__Api__HttpsPort" Value="5443" Action="set" System="yes" Part="all" />

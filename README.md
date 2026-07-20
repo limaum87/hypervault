@@ -200,7 +200,7 @@ For production hosting, configure fixed Kestrel endpoints. The default productio
 
 When `AutoGenerate=true` and `Certificate:Path` is empty, the API creates or reuses a local PFX. On Windows, the default location is `C:\ProgramData\HyperVBackupAgent\certs\agent-api.pfx`. The authenticated endpoint `GET /agent/certificate` returns the SHA-256 fingerprint that the central server should store during enrollment.
 
-If a customer already has a certificate, set `Certificate:Path` and `Certificate:Password` to use that PFX instead. If `AutoGenerate=false` and `Certificate:Path` is empty, Kestrel falls back to the default HTTPS certificate available to the process. Use `HyperVBackupAgent:AllowedPathRoots` to restrict API-supplied backup, restore, and verification paths.
+If a customer already has a certificate, set `Certificate:Path` and `Certificate:Password` to use that PFX instead. If `AutoGenerate=false` and `Certificate:Path` is empty, Kestrel falls back to the default HTTPS certificate available to the process. By default, `HyperVBackupAgent:AllowedPathRoots` is empty and the API accepts any absolute backup, restore, or verification path. Set `AllowedPathRoots` only when the host should be restricted to specific directories or volumes.
 
 Implemented endpoints:
 

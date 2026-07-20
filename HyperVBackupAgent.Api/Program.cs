@@ -60,17 +60,17 @@ app.Use(async (context, next) =>
     }
     catch (ArgumentException ex)
     {
-        await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_request", ex.Message);
+        await WriteLoggedErrorAsync(app.Logger, context, StatusCodes.Status400BadRequest, "invalid_request", ex.Message, ex);
     }
     catch (InvalidOperationException ex) when (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
     {
-        await WriteErrorAsync(context, StatusCodes.Status404NotFound, "not_found", ex.Message);
+        await WriteLoggedErrorAsync(app.Logger, context, StatusCodes.Status404NotFound, "not_found", ex.Message, ex);
     }
     catch (InvalidOperationException ex) when (
         ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
         ex.Message.Contains("overwrite", StringComparison.OrdinalIgnoreCase))
     {
-        await WriteErrorAsync(context, StatusCodes.Status409Conflict, "conflict", ex.Message);
+        await WriteLoggedErrorAsync(app.Logger, context, StatusCodes.Status409Conflict, "conflict", ex.Message, ex);
     }
     catch (Exception ex)
     {
@@ -89,14 +89,14 @@ app.Use(async (context, next) =>
     var configuredToken = app.Configuration["HyperVBackupAgent:ApiToken"];
     if (string.IsNullOrWhiteSpace(configuredToken))
     {
-        await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable, "token_not_configured", "API token is not configured.");
+        await WriteLoggedErrorAsync(app.Logger, context, StatusCodes.Status503ServiceUnavailable, "token_not_configured", "API token is not configured.");
         return;
     }
 
     var suppliedToken = context.Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
     if (!string.Equals(configuredToken, suppliedToken, StringComparison.Ordinal))
     {
-        await WriteErrorAsync(context, StatusCodes.Status401Unauthorized, "unauthorized", "Bearer token is missing or invalid.");
+        await WriteLoggedErrorAsync(app.Logger, context, StatusCodes.Status401Unauthorized, "unauthorized", "Bearer token is missing or invalid.");
         return;
     }
 
@@ -303,6 +303,29 @@ static async Task WriteErrorAsync(HttpContext context, int statusCode, string co
     context.Response.StatusCode = statusCode;
     context.Response.ContentType = "application/json";
     await context.Response.WriteAsJsonAsync(new ApiError(code, message, context.TraceIdentifier));
+}
+
+static async Task WriteLoggedErrorAsync(
+    Microsoft.Extensions.Logging.ILogger logger,
+    HttpContext context,
+    int statusCode,
+    string code,
+    string message,
+    Exception? exception = null)
+{
+    if (!context.Response.HasStarted)
+    {
+        logger.LogWarning(
+            exception,
+            "API request rejected with {StatusCode} {ErrorCode} while processing {Method} {Path}: {ErrorMessage}",
+            statusCode,
+            code,
+            context.Request.Method,
+            context.Request.Path,
+            message);
+    }
+
+    await WriteErrorAsync(context, statusCode, code, message);
 }
 
 static string GetOrCreateCorrelationId(HttpContext context)
