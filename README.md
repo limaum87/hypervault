@@ -17,6 +17,7 @@ This is an MVP implementation. The codebase currently includes:
 - Restore with incremental block application.
 - Targeted restore to a specific restore point.
 - Restore verification that reconstructs disks into a temporary folder and attempts read-only VHDX mount validation when applicable.
+- File-level restore sessions for Windows guests: materialize a selected restore point, mount VHDX read-only, browse volumes, and stream individual files.
 - File-system restore-point catalog for API listing.
 - Temporary checkpoint cleanup.
 - File-system retention policy.
@@ -228,6 +229,11 @@ Implemented endpoints:
 - `POST /backups/verify-chain`
 - `POST /backups/verify-restore`
 - `POST /restore`
+- `POST /restore/flr/sessions`
+- `GET /restore/flr/sessions/{id}`
+- `GET /restore/flr/sessions/{id}/ls?volumeId=...&path=...`
+- `GET /restore/flr/sessions/{id}/get?volumeId=...&path=...`
+- `DELETE /restore/flr/sessions/{id}`
 - `POST /maintenance/cleanup-temp-checkpoints`
 - `POST /maintenance/apply-retention`
 
@@ -238,6 +244,12 @@ Use pre-flight endpoints before creating long-running jobs. Backup pre-flight va
 API logs are structured JSON on stdout and, by default, daily rolling files. On Windows, file logs are written to `C:\ProgramData\HyperVBackupAgent\logs\hypervbackupagent-api-*.log`; override the directory with `HyperVBackupAgent:Api:Logging:Directory`, retention with `RetainedFileCountLimit`, and per-file size with `FileSizeLimitBytes`. Each HTTP response includes `X-Correlation-Id`; clients may also supply that header. Request logs and job logs include `CorrelationId`, and asynchronous job execution logs include `JobId`.
 
 Health checks are public. `GET /health/live` reports whether the API process is running. `GET /health/ready` returns `200` only when the API token is configured, the backup root exists and is accessible, and the configured Hyper-V provider can be initialized; otherwise it returns `503` with per-check details.
+
+### File-level restore (Windows guests)
+
+Create a file-level restore session with `POST /restore/flr/sessions` and a body such as `{"restorePoint":"D:\\HyperVBackups\\HOST\\VM\\chain-...","targetBackupId":"inc-0001","ttlMinutes":60}`. The agent materializes the selected point under `C:\ProgramData\HyperVBackupAgent\flr`, mounts its VHDX files with `Mount-VHD -ReadOnly`, and returns the available volumes. Use a returned `volumeId` plus a relative `path` to list entries or download one file. `GET .../get` supports HTTP Range requests.
+
+The agent rejects absolute paths and `..` traversal for browse and download requests; it only serves files beneath the selected mounted volume. Sessions expire after their configured TTL and are cleaned on API startup. Configure `HyperVBackupAgent:FileLevelRestore:TemporaryRoot` and `HyperVBackupAgent:FileLevelRestore:TtlMinutes` (5 to 1,440; default 60) when the default temporary location or timeout is unsuitable. This MVP supports Windows-readable filesystems only; BitLocker-protected and Linux guest filesystems require additional support.
 
 ## Windows Services
 
@@ -389,5 +401,5 @@ Current test coverage is focused on simulation-mode behavior and composition. Re
 - Native RCT requires Windows Server 2016+ Hyper-V and VM configuration versions that support reference-point based change tracking.
 - SQLite is referenced but not yet used as the primary metadata index.
 - VM restore currently creates a basic VM configuration; it does not fully recreate CPU, memory, firmware, network, or advanced VM settings.
-- No compression, encryption, deduplication, cloud storage, or granular file restore.
+- No compression, encryption, deduplication, or cloud storage.
 - No Hyper-V cluster support.

@@ -27,6 +27,7 @@ builder.Services.AddSingleton<ApiJobService>();
 builder.Services.AddSingleton<ApiAgentInfoService>();
 builder.Services.AddSingleton<ApiPreflightService>();
 builder.Services.AddSingleton<ApiHealthService>();
+builder.Services.AddHostedService<ApiFileLevelRestoreCleanupWorker>();
 
 var app = builder.Build();
 
@@ -262,6 +263,26 @@ app.MapPost("/restore", async ([FromBody] RestoreRequest request, IRestoreEngine
     await engine.RestoreAsync(validated, ct);
     return Results.Accepted();
 });
+app.MapPost("/restore/flr/sessions", async ([FromBody] FileLevelRestoreRequest request, IFileLevelRestoreService sessions, ApiPathValidator paths, CancellationToken ct) =>
+{
+    var validated = request with { RestorePoint = paths.ValidateAbsolutePath(request.RestorePoint, nameof(request.RestorePoint)) };
+    var session = await sessions.CreateSessionAsync(validated, ct);
+    return Results.Created($"/restore/flr/sessions/{session.SessionId}", session);
+});
+app.MapGet("/restore/flr/sessions/{id}", (string id, IFileLevelRestoreService sessions) =>
+{
+    var session = sessions.GetSession(id);
+    return session is null ? Results.NotFound() : Results.Ok(session);
+});
+app.MapGet("/restore/flr/sessions/{id}/ls", (string id, string volumeId, string? path, IFileLevelRestoreService sessions) =>
+    Results.Ok(sessions.ListEntries(id, volumeId, path)));
+app.MapGet("/restore/flr/sessions/{id}/get", (string id, string volumeId, string path, IFileLevelRestoreService sessions) =>
+{
+    var filePath = sessions.GetFilePath(id, volumeId, path);
+    return Results.File(filePath, "application/octet-stream", Path.GetFileName(filePath), enableRangeProcessing: true);
+});
+app.MapDelete("/restore/flr/sessions/{id}", async (string id, IFileLevelRestoreService sessions, CancellationToken ct) =>
+    await sessions.CloseSessionAsync(id, ct) ? Results.NoContent() : Results.NotFound());
 app.MapPost("/maintenance/cleanup-temp-checkpoints", async ([FromBody] CleanupCheckpointsRequest request, IHyperVService hyperV, CancellationToken ct) =>
     Results.Ok(await hyperV.CleanupTemporaryCheckpointsAsync(request.NamePrefix, ct)));
 app.MapPost("/maintenance/apply-retention", async ([FromBody] RetentionRequest request, IRetentionService retention, ApiPathValidator paths, CancellationToken ct) =>

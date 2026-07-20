@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IHashService, HashService>();
         services.AddSingleton<RestoreMaterializer>();
         services.AddSingleton<VhdReadOnlyMountValidator>();
+        services.AddSingleton<IFileLevelRestoreService, FileLevelRestoreService>();
         services.AddSingleton<IBackupEngine, BackupEngine>();
         services.AddSingleton<IVerifyEngine, VerifyEngine>();
         services.AddSingleton<IRestoreEngine, RestoreEngine>();

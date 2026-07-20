@@ -67,6 +67,42 @@ public sealed record RestoreRequest(
     string? TargetBackupId = null,
     bool CreateVm = true);
 
+public sealed record FileLevelRestoreRequest(
+    string RestorePoint,
+    string? TargetBackupId = null,
+    int? TtlMinutes = null);
+
+public sealed record FileLevelRestoreVolume(
+    string VolumeId,
+    string MountPath,
+    string? Label,
+    string? FileSystem,
+    long SizeBytes);
+
+public sealed record FileLevelRestoreSession(
+    string SessionId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiresAt,
+    IReadOnlyList<FileLevelRestoreVolume> Volumes);
+
+public sealed record FileLevelRestoreEntry(
+    string Name,
+    string RelativePath,
+    bool IsDirectory,
+    long? SizeBytes,
+    DateTimeOffset LastWriteTimeUtc);
+
+public interface IFileLevelRestoreService
+{
+    Task<FileLevelRestoreSession> CreateSessionAsync(FileLevelRestoreRequest request, CancellationToken cancellationToken = default);
+    FileLevelRestoreSession? GetSession(string sessionId);
+    IReadOnlyList<FileLevelRestoreEntry> ListEntries(string sessionId, string volumeId, string? relativePath);
+    string GetFilePath(string sessionId, string volumeId, string relativePath);
+    Task<bool> CloseSessionAsync(string sessionId, CancellationToken cancellationToken = default);
+    Task CleanupExpiredSessionsAsync(CancellationToken cancellationToken = default);
+    Task CleanupOrphanedSessionsAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed record BackupResult(
     string BackupId,
     string ChainId,
