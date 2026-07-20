@@ -241,6 +241,6 @@
   "restore.target_host_hint": "Onde o restore será executado e a VM/disco será criada.",
   "restore.dest_hint_new_vm": "Pasta onde os discos restaurados são materializados antes de criar a VM.",
   "restore.dest_hint_disk_only": "Pasta onde o(s) disco(s) restaurado(s) serão gravados e deixados prontos para montar.",
-  "restore.dest_auto_note": "Sugerido automaticamente; edite livremente.",
+  "restore.dest_auto_note": "Sugerido a partir do storage do backup; edite livremente.",
   "restore.chain_path": "Caminho da chain"
 }

@@ -241,6 +241,6 @@
   "restore.target_host_hint": "Where the restore will run and the VM/disk will be created.",
   "restore.dest_hint_new_vm": "Folder where restored disks are materialized before VM creation.",
   "restore.dest_hint_disk_only": "Folder where the restored disk(s) will be written and left ready to mount.",
-  "restore.dest_auto_note": "Auto-suggested; feel free to edit.",
+  "restore.dest_auto_note": "Derived from the backup's storage; feel free to edit.",
   "restore.chain_path": "Chain path"
 }

@@ -887,6 +887,8 @@ async function verifyBackup(id) {
 // ---- Restore wizard state ----
 let _rfVms = [];
 let _rfHosts = [];
+let _rfStorages = [];     // configured storage/vault targets, to derive a default destination
+let _rfStorageBase = "";  // resolved storage path that owns the selected restore point
 let _rpList = [];        // restore points loaded for the currently selected VM
 let _rpChainPath = "";   // chain directory resolved from the selected point (sent to the agent)
 
@@ -998,10 +1000,11 @@ async function viewRestores() {
 }
 
 async function restoreForm(prefill = {}) {
-  const [hosts, vms] = await Promise.all([api.get("/api/hosts"), api.get("/api/vms")]);
+  const [hosts, vms, storages] = await Promise.all([api.get("/api/hosts"), api.get("/api/vms"), api.get("/api/storages")]);
   if (!hosts.length) { toast(t("restore.no_vms"), "err"); location.hash = "#hosts"; return; }
   if (!vms.length) { toast(t("restore.no_vms"), "err"); location.hash = "#vms"; return; }
-  _rfHosts = hosts; _rfVms = vms;
+  _rfHosts = hosts; _rfVms = vms; _rfStorages = Array.isArray(storages) ? storages : [];
+  _rfStorageBase = "";
 
   const vmOpts = vms.map(v => `<option value="${v.id}" data-host="${v.hostId}" ${prefill.sourceVmId === v.id ? "selected" : ""}>${esc(v.name)} — ${esc(v.hostName)}</option>`).join("");
   const hostOpts = hosts.map(h => `<option value="${h.id}" ${prefill.targetHostId === h.id ? "selected" : ""}>${esc(h.name)}</option>`).join("");
@@ -1131,16 +1134,47 @@ function onRestorePointChanged() {
   if (!chosen) { _rpChainPath = ""; return; }
   const p = _rpList.find(x => x.backupId === chosen.value);
   _rpChainPath = p ? (p.chainPath || p.restorePointPath || "") : "";
+  // Re-derive the destination base from the newly selected point and re-apply
+  // the suggestion if the operator hasn't typed a custom path yet.
+  _rfStorageBase = resolveStorageBase(_rpChainPath);
+  const destInput = $("#rfDestination");
+  if (destInput && !destInput.dataset.touched) {
+    const mode = ((f && (f.querySelector('input[name="mode"]:checked') || {}).value)) || "new_vm";
+    const vm = _rfVms.find(v => v.id === Number(f.sourceVmId.value));
+    destInput.value = defaultRestoreDestination(vm ? vm.name : "restored", mode);
+  }
   $$('#rf .rp-card').forEach(el => el.classList.remove('selected'));
   const card = chosen.closest('.rp-card');
   if (card) card.classList.add('selected');
 }
 
-// Sensible Windows default for the restore destination on the target host.
-// Mirrors the NewName suffix so each restore lands in its own predictable folder.
+// Resolve which configured storage (vault) owns the selected restore point, so the
+// suggested destination derives from the backup's own storage path rather than a
+// hardcoded guess. Falls back to "" when no storage path is a prefix of the chain.
+function resolveStorageBase(chainPath) {
+  if (!_rfStorages || !chainPath) return "";
+  const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/,
+"").toLowerCase();
+  const target = norm(chainPath);
+  if (!target) return "";
+  let best = null, bestLen = -1;
+  for (const s of _rfStorages) {
+    const sp = norm(s.path);
+    if (!sp) continue;
+    if (target === sp || target.startsWith(sp + "/")) {
+      if (sp.length > bestLen) { best = s; bestLen = sp.length; }
+    }
+  }
+  return best ? best.path.replace(/[\\/]+$/, "") : "";
+}
+
+// Default restore destination on the target host. Prefers the owning storage's
+// path (+ a "Restores" subfolder); falls back to a conventional local path when
+// the chain can't be matched to a configured storage.
 function defaultRestoreDestination(baseName, mode) {
   const sub = mode === "disk_only" ? `${baseName}-disk` : `${baseName}-restored`;
-  return `C:\\ProgramData\\HyperVault\\Restores\\${sub}`;
+  const root = _rfStorageBase || "C:\\ProgramData\\HyperVault";
+  return `${root}\\Restores\\${sub}`;
 }
 
 function toggleRestoreMode() {
@@ -1150,6 +1184,7 @@ function toggleRestoreMode() {
   $$('#rf .rf-newvm-only').forEach(el => el.style.display = diskOnly ? 'none' : '');
   const vm = _rfVms.find(v => v.id === Number(f.sourceVmId.value));
   const baseName = vm ? vm.name : "restored";
+  _rfStorageBase = resolveStorageBase(_rpChainPath); // re-resolve in case the point changed
   const nameInput = $("#rfNewName");
   const nameLabel = $("#rfNewNameLabel");
   const destInput = $("#rfDestination");
