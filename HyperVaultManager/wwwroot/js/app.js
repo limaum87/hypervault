@@ -81,18 +81,23 @@ function FilterSelect(id, opts, value) {
   const optHtml = opts.map(o => `<option value="${esc(o.value)}"${String(o.value) === String(value) ? " selected" : ""}>${esc(o.label)}</option>`).join("");
   return `<div class="filter-select"><select id="${id}">${optHtml}</select>${IC("chevron-down", 15)}</div>`;
 }
+const HEALTH_SLOTS = 10;
 function StatusHistory(vm) {
-  const states = ["h-healthy", "h-warning", "h-error", "h-unavailable"];
-  const rng = mulberry32(hashStr((vm.name || "") + "#" + (vm.id || "")));
-  const bars = [];
-  for (let i = 0; i < 10; i++) {
-    const r = rng();
-    const s = r < 0.74 ? 0 : r < 0.87 ? 1 : r < 0.95 ? 2 : 3;
-    bars.push(states[s]);
-  }
-  const last = mapBackupStatusToHealth(vm.lastBackupStatus);
-  if (last) bars[bars.length - 1] = last;
-  return `<div class="status-history" title="${esc(t("vms.health"))}">${bars.map(b => `<span class="sh-bar ${b}"></span>`).join("")}</div>`;
+  // Real backup history (oldest -> newest) coming from the API. Left-pad with
+  // empty slots so the layout stays stable and the newest run is rightmost.
+  const history = Array.isArray(vm && vm.backupHistory) ? vm.backupHistory : [];
+  const padded = [];
+  for (let i = 0; i < HEALTH_SLOTS - history.length; i++) padded.push(null);
+  history.forEach(h => padded.push(h));
+  const bars = padded.map(h => {
+    if (!h || !h.status) {
+      return `<span class="sh-bar h-empty" title="${esc(t("vms.no_backup"))}"></span>`;
+    }
+    const cls = mapBackupStatusToHealth(h.status);
+    const when = h.at ? fmtRelativeShort(h.at) : t("common.never");
+    return `<span class="sh-bar ${cls}" title="${esc(h.status)} · ${esc(when)}"></span>`;
+  });
+  return `<div class="status-history" title="${esc(t("vms.health"))}">${bars.join("")}</div>`;
 }
 function mapBackupStatusToHealth(s) {
   if (!s) return "h-unavailable";
@@ -108,7 +113,6 @@ function ActionButton(label, onclick, opts = {}) {
 
 /* deterministic helpers for machine visuals */
 function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 const TAG_SET = [
   { key: "prod", label: "Prod" }, { key: "projects", label: "Projects" },

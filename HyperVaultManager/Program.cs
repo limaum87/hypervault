@@ -640,9 +640,13 @@ api.MapGet("/vms", async (int? hostId, ManagerDbContext db) =>
     var result = new List<VmViewDto>();
     foreach (var v in list)
     {
-        var last = await db.BackupRuns.Where(r => r.VmId == v.Id)
-            .OrderByDescending(r => r.QueuedAt).FirstOrDefaultAsync();
-        result.Add(Map.Vm(v, v.Host?.Name ?? "", last));
+        // last 10 backup runs for this VM (newest first), reversed so the history
+        // reads left-to-right as time progresses; rightmost bar == most recent run.
+        var recent = await db.BackupRuns.Where(r => r.VmId == v.Id)
+            .OrderByDescending(r => r.QueuedAt).Take(10).ToListAsync();
+        var last = recent.FirstOrDefault();
+        var history = recent.AsEnumerable().Reverse().ToList();
+        result.Add(Map.Vm(v, v.Host?.Name ?? "", last, history));
     }
     return Results.Ok(result);
 });
@@ -998,9 +1002,12 @@ static class Map
     public static StorageViewDto Storage(StorageTarget s) =>
         new(s.Id, s.Name, s.Type, s.Path, s.Notes, s.CreatedAt);
 
-    public static VmViewDto Vm(VirtualMachine v, string hostName, BackupRun? last = null) => new(
+    public static VmViewDto Vm(VirtualMachine v, string hostName, BackupRun? last = null, IReadOnlyList<BackupRun>? history = null) => new(
         v.Id, v.HostId, hostName, v.ExternalId, v.Name, v.State, v.Generation, v.MemoryBytes,
-        v.DiskSizeBytes, v.LastSyncedAt, last?.CompletedAt, last?.Status);
+        v.DiskSizeBytes, v.LastSyncedAt, last?.CompletedAt, last?.Status,
+        (history ?? Array.Empty<BackupRun>())
+            .Select(r => new BackupHistoryEntryDto(r.Status, r.CompletedAt ?? r.QueuedAt))
+            .ToList());
 
     public static JobViewDto Job(BackupJob j) => new(
         j.Id, j.Name, j.HostId, j.Host?.Name ?? "", j.VmId, j.Vm?.Name ?? j.Vm?.ExternalId ?? "",

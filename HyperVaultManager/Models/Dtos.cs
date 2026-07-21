@@ -42,6 +42,9 @@ public record StorageViewDto(int Id, string Name, string Type, string Path, stri
 public record StorageStatsDto(long TotalBytes, long FreeBytes, long UsedBytes, string SourceHostName);
 
 // ---- VMs ----
+/// <summary>A single point in a VM's backup-health history (oldest -> newest).</summary>
+public record BackupHistoryEntryDto(string Status, DateTimeOffset? At);
+
 public record VmViewDto(
     int Id,
     int HostId,
@@ -54,7 +57,8 @@ public record VmViewDto(
     long DiskSizeBytes,
     DateTimeOffset? LastSyncedAt,
     DateTimeOffset? LastBackupAt,
-    string? LastBackupStatus);
+    string? LastBackupStatus,
+    IReadOnlyList<BackupHistoryEntryDto> BackupHistory);
 
 // ---- Jobs ----
 public record JobCreateDto(
