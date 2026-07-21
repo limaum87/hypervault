@@ -87,6 +87,12 @@ public class StorageTarget
     public string Path { get; set; } = string.Empty;
     public string? Notes { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // SMB credentials (only meaningful when Type == smb). The password is stored
+    // encrypted (reversible) via SecretProtector; the plaintext is never persisted.
+    public string? SmbUsername { get; set; }
+    public string? SmbDomain { get; set; }
+    public string? SmbPasswordCipher { get; set; }
 }
 
 public static class JobTypes

@@ -230,7 +230,16 @@ public sealed class ApiPreflightService
     }
 }
 
-public sealed record BackupPreflightRequest(string VmNameOrId, string Destination, BackupType Type = BackupType.Full);
+public sealed record BackupPreflightRequest(
+    string VmNameOrId,
+    string Destination,
+    BackupType Type = BackupType.Full,
+    string? SmbUsername = null,
+    string? SmbPassword = null,
+    string? SmbDomain = null)
+{
+    public SmbCredentials? SmbCredentials => SmbCredentials.From(SmbUsername, SmbPassword, SmbDomain);
+}
 
 public sealed record RestorePreflightRequest(
     string RestorePoint,

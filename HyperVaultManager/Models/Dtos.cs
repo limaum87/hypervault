@@ -35,8 +35,15 @@ public record HostViewDto(
     int VmCount);
 
 // ---- Storages ----
-public record StorageCreateDto(string Name, string Type, string Path, string? Notes);
-public record StorageViewDto(int Id, string Name, string Type, string Path, string? Notes, DateTimeOffset CreatedAt);
+public record StorageCreateDto(string Name, string Type, string Path, string? Notes,
+    string? SmbUsername = null, string? SmbPassword = null, string? SmbDomain = null);
+
+public record StorageViewDto(int Id, string Name, string Type, string Path, string? Notes, DateTimeOffset CreatedAt,
+    string? SmbUsername, string? SmbDomain, bool HasSmbPassword);
+
+/// <summary>Body for testing SMB/storage access against a host agent.
+/// Credentials are sent inline (from the form) so it works before saving.</summary>
+public record StorageTestDto(int HostId, string Path, string? SmbUsername, string? SmbPassword, string? SmbDomain);
 
 /// <summary>Disk capacity of a storage/vault, resolved via one of the hosts that backs up to it.</summary>
 public record StorageStatsDto(long TotalBytes, long FreeBytes, long UsedBytes, string SourceHostName);

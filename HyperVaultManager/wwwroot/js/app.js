@@ -741,25 +741,107 @@ function storageSpaceCell(total, free, sourceHost) {
   </div>`;
 }
 
+let _storageFormState = null; // { hadPassword } for the password-"keep" UX
+
 async function storageForm(id = null) {
-  let s = {};
-  if (id) s = await api.get(`/api/storages`).then(l => l.find(x => x.id === id));
+  const [list, hosts] = await Promise.all([
+    id ? api.get("/api/storages") : Promise.resolve([]),
+    api.get("/api/hosts")
+  ]);
+  const s = id ? (list.find(x => x.id === id) || {}) : {};
+  _storageFormState = { hadPassword: !!s.hasSmbPassword };
+  const isSmb = (s.type || "local_path") === "smb";
+  const hostOpts = (hosts && hosts.length)
+    ? hosts.map(h => `<option value="${h.id}">${esc(h.name)}</option>`).join("")
+    : `<option value="">${esc(t("storages.no_hosts"))}</option>`;
   const body = `<form id="sf" class="form-grid">
     <div class="field"><label data-i18n="common.name">${t("common.name")}</label><input name="name" value="${esc(s.name || "")}" required /></div>
-    <div class="field"><label data-i18n="storages.type">${t("storages.type")}</label><select name="type">
-      <option value="local_path" ${s.type === "local_path" ? "selected" : ""}>${t("storages.types.local_path")}</option>
-      <option value="smb" ${s.type === "smb" ? "selected" : ""}>${t("storages.types.smb")}</option></select></div>
-    <div class="field full"><label data-i18n="storages.path">${t("storages.path")}</label><input name="path" value="${esc(s.path || "")}" required /></div>
+    <div class="field"><label data-i18n="storages.type">${t("storages.type")}</label><select name="type" id="sfType" onchange="toggleSmbFields()">
+      <option value="local_path" ${!isSmb ? "selected" : ""}>${t("storages.types.local_path")}</option>
+      <option value="smb" ${isSmb ? "selected" : ""}>${t("storages.types.smb")}</option></select></div>
+    <div class="field full"><label data-i18n="storages.path">${t("storages.path")}</label><input name="path" id="sfPath" value="${esc(s.path || "")}" placeholder="\\\\server\\share\\backups" required /></div>
+
+    <div class="field full smb-only" id="smbFields" style="display:${isSmb ? "" : "none"}">
+      <div class="smb-grid">
+        <div class="field"><label data-i18n="storages.smb_user">${t("storages.smb_user")}</label><input name="smbUsername" value="${esc(s.smbUsername || "")}" autocomplete="off" /></div>
+        <div class="field"><label data-i18n="storages.smb_pass">${t("storages.smb_pass")}</label><input name="smbPassword" type="password" placeholder="${s.hasSmbPassword ? esc(t("storages.smb_pass_keep")) : ""}" autocomplete="new-password" /></div>
+        <div class="field"><label data-i18n="storages.smb_domain">${t("storages.smb_domain")}</label><input name="smbDomain" value="${esc(s.smbDomain || "")}" autocomplete="off" /></div>
+      </div>
+      <div class="muted small">${esc(t("storages.smb_hint"))}</div>
+    </div>
+
+    <div class="field full">
+      <label data-i18n="storages.test">${t("storages.test")}</label>
+      <div class="smb-test-row">
+        <select name="testHost" id="sfTestHost">${hostOpts}</select>
+        <button type="button" class="btn" onclick="testStorage(this)">${IC("plug", 14)} <span data-i18n="storages.test_btn">${t("storages.test_btn")}</span></button>
+        <span id="sfTestResult" class="muted small"></span>
+      </div>
+    </div>
+
     <div class="field full"><label data-i18n="storages.notes">${t("storages.notes")}</label><textarea name="notes">${esc(s.notes || "")}</textarea></div>
   </form>`;
   const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
     <button class="btn primary" onclick="saveStorage(${id || "null"})"><span data-i18n="common.save">${t("common.save")}</span></button>`;
   openModal("storages.add", body, foot);
+  i18n.apply($("#modalRoot"));
+}
+
+function toggleSmbFields() {
+  const el = $("#smbFields"); if (!el) return;
+  el.style.display = $("#sfType") && $("#sfType").value === "smb" ? "" : "none";
+}
+
+async function testStorage(btn) {
+  const f = $("#sf"); const fd = new FormData(f);
+  const hostId = fd.get("testHost");
+  const path = (fd.get("path") || "").trim();
+  const resEl = $("#sfTestResult");
+  if (!hostId) { toast(t("storages.no_hosts"), "err"); return; }
+  if (!path) { toast(t("storages.path_required"), "err"); return; }
+  const isSmb = fd.get("type") === "smb";
+  const payload = {
+    hostId: Number(hostId), path,
+    smbUsername: isSmb ? (fd.get("smbUsername") || null) : null,
+    smbPassword: isSmb ? (fd.get("smbPassword") || null) : null,
+    smbDomain: isSmb ? (fd.get("smbDomain") || null) : null
+  };
+  if (resEl) { resEl.textContent = t("storages.testing"); resEl.style.color = ""; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api.post("/api/storages/test", payload);
+    if (r && r.ok) {
+      const free = (r.freeBytes != null && r.freeBytes > 0) ? ` (${fmtBytes(r.freeBytes)} ${t("storages.free")})` : "";
+      const msg = t("storages.test_ok") + free;
+      if (resEl) { resEl.textContent = msg; resEl.style.color = "var(--ok)"; }
+      toast(msg, "ok");
+    } else {
+      const msg = (r && r.message) ? r.message : t("storages.test_fail");
+      if (resEl) { resEl.textContent = msg; resEl.style.color = "var(--err)"; }
+      toast(msg, "err");
+    }
+  } catch (e) {
+    if (resEl) { resEl.textContent = e.message; resEl.style.color = "var(--err)"; }
+    toast(e.message, "err");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function saveStorage(id) {
   const f = $("#sf"); const fd = new FormData(f);
-  const payload = { name: fd.get("name"), type: fd.get("type"), path: fd.get("path"), notes: fd.get("notes") || null };
+  const isSmb = fd.get("type") === "smb";
+  const typedPass = fd.get("smbPassword");
+  // On edit, blank password keeps the existing one; on create, blank = no password.
+  let smbPassword;
+  if (!isSmb) smbPassword = null;
+  else if (id && _storageFormState && _storageFormState.hadPassword && !typedPass) smbPassword = null;
+  else smbPassword = typedPass || null;
+  const payload = {
+    name: fd.get("name"), type: fd.get("type"), path: fd.get("path"), notes: fd.get("notes") || null,
+    smbUsername: isSmb ? (fd.get("smbUsername") || null) : null,
+    smbPassword, smbDomain: isSmb ? (fd.get("smbDomain") || null) : null
+  };
   try {
     if (id) { await api.put(`/api/storages/${id}`, payload); toast(t("toast.success"), "ok"); }
     else { await api.post("/api/storages", payload); toast(t("toast.created"), "ok"); }

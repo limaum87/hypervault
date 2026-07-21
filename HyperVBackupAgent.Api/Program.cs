@@ -134,6 +134,41 @@ app.MapGet("/storage/stats", (string path, ApiPathValidator paths, ApiStorageSta
     var validated = paths.ValidateAbsolutePath(path, nameof(path));
     return Results.Ok(stats.GetStats(validated));
 });
+
+// Stats with SMB credentials (POST so the password never lands in a query string).
+app.MapPost("/storage/stats", async ([FromBody] StorageAccessRequest request, ApiPathValidator paths, ApiStorageStatsService stats, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Path))
+        throw new ArgumentException("path is required.");
+    var validated = paths.ValidateAbsolutePath(request.Path, nameof(request.Path));
+    await using var smb = SmbShareMount.Mount(validated, request.SmbCredentials);
+    return Results.Ok(stats.GetStats(validated));
+});
+
+// Validate access to a storage path (used by the manager's "Test" button).
+// When creds are supplied, mounts the share; reports ok/failed + free space.
+app.MapPost("/storage/test", async ([FromBody] StorageAccessRequest request, ApiPathValidator paths, ApiStorageStatsService stats, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Path))
+        throw new ArgumentException("path is required.");
+    var validated = paths.ValidateAbsolutePath(request.Path, nameof(request.Path));
+    try
+    {
+        await using var smb = SmbShareMount.Mount(validated, request.SmbCredentials);
+        var space = stats.GetStats(validated);
+        return Results.Ok(new
+        {
+            ok = true,
+            message = smb.IsActive ? "SMB share mounted successfully." : "Path is accessible.",
+            totalBytes = space.TotalBytes,
+            freeBytes = space.FreeBytes
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { ok = false, message = ex.Message, totalBytes = 0L, freeBytes = 0L });
+    }
+});
 app.MapGet("/jobs", (ApiJobService jobs) => Results.Ok(jobs.ListJobs()));
 app.MapGet("/jobs/{id}", (string id, ApiJobService jobs) =>
 {
@@ -147,6 +182,8 @@ app.MapPost("/jobs/backup-full", ([FromBody] BackupRequest request, IBackupEngin
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     var job = jobs.Enqueue("backup-full", validated.VmNameOrId, validated.Destination, async ct =>
     {
+        // Authenticate to the SMB share (no-op for local paths / no creds) before writing.
+        await using var smb = SmbShareMount.Mount(validated.Destination, validated.SmbCredentials);
         var result = await engine.RunFullBackupAsync(validated, ct);
         if (result.Status != BackupStatus.Completed)
         {
@@ -162,6 +199,7 @@ app.MapPost("/jobs/backup-incremental", ([FromBody] BackupRequest request, IBack
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
     var job = jobs.Enqueue("backup-incremental", validated.VmNameOrId, validated.Destination, async ct =>
     {
+        await using var smb = SmbShareMount.Mount(validated.Destination, validated.SmbCredentials);
         var result = await engine.RunIncrementalBackupAsync(validated, ct);
         if (result.Status != BackupStatus.Completed)
         {
@@ -222,6 +260,8 @@ app.MapPost("/jobs/restore", ([FromBody] RestoreRequest request, IRestoreEngine 
 app.MapPost("/backups/preflight", async ([FromBody] BackupPreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
 {
     var validated = request with { Destination = paths.ValidateAbsolutePath(request.Destination, nameof(request.Destination)) };
+    // Mount the share (no-op without creds) so free-space + path checks can see it.
+    await using var smb = SmbShareMount.Mount(validated.Destination, validated.SmbCredentials);
     return Results.Ok(await preflight.CheckBackupAsync(validated, ct));
 });
 app.MapPost("/restore/preflight", async ([FromBody] RestorePreflightRequest request, ApiPreflightService preflight, ApiPathValidator paths, CancellationToken ct) =>
@@ -401,3 +441,14 @@ public sealed record ApiError(string Code, string Message, string TraceId);
 public sealed record VerifyChainRequest(string ChainPath);
 public sealed record VerifyRestoreRequest(string RestorePointPath, bool KeepTemporaryFiles = false);
 public sealed record CleanupCheckpointsRequest(string NamePrefix = "HyperVBackupAgent-");
+
+/// <summary>Body for storage access endpoints (stats/test). Carries optional SMB
+/// credentials so the agent can mount the share before probing the path.</summary>
+public sealed record StorageAccessRequest(
+    string Path,
+    string? SmbUsername = null,
+    string? SmbPassword = null,
+    string? SmbDomain = null)
+{
+    public SmbCredentials? SmbCredentials => SmbCredentials.From(SmbUsername, SmbPassword, SmbDomain);
+}

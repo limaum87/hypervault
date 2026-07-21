@@ -57,7 +57,28 @@ public sealed record RctPreparationResult(
     string? VmVersion = null,
     string? CheckpointId = null);
 
-public sealed record BackupRequest(string VmNameOrId, string Destination);
+public sealed record BackupRequest(
+    string VmNameOrId,
+    string Destination,
+    string? SmbUsername = null,
+    string? SmbPassword = null,
+    string? SmbDomain = null)
+{
+    /// <summary>Optional SMB credentials for a UNC destination, derived from the flat request fields.</summary>
+    public SmbCredentials? SmbCredentials => SmbCredentials.From(SmbUsername, SmbPassword, SmbDomain);
+}
+
+/// <summary>Optional SMB credentials for authenticating to a UNC share.
+/// Flat on the wire (smbUsername/smbPassword/smbDomain) so it can be added to
+/// any request record without nesting.</summary>
+public sealed record SmbCredentials(string? Username, string? Password, string? Domain)
+{
+    public bool HasCredentials => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
+    public static SmbCredentials? From(string? username, string? password, string? domain)
+        => string.IsNullOrWhiteSpace(username) && string.IsNullOrWhiteSpace(password)
+            ? null
+            : new SmbCredentials(username, password, domain);
+}
 
 public sealed record RestoreRequest(
     string RestorePoint,

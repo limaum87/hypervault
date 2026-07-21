@@ -45,8 +45,20 @@ public class AgentClient
         => await GetJsonAsync<JsonArray>($"{BuildBaseUrl(host)}/vms/{Uri.EscapeDataString(vmExternalId)}/restore-points", host, CreateClient(), ct).ConfigureAwait(false);
 
     /// <summary>Total/free/used bytes for the volume that hosts a storage path, as reported by the agent.</summary>
-    public async Task<JsonObject?> GetStorageStatsAsync(HyperVHost host, string path, CancellationToken ct = default)
-        => await GetJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/storage/stats?path={Uri.EscapeDataString(path)}", host, CreateClient(), ct).ConfigureAwait(false);
+    public async Task<JsonObject?> GetStorageStatsAsync(HyperVHost host, string path, SmbCredentials? smb = null, CancellationToken ct = default)
+    {
+        // When SMB credentials are supplied, POST them so they never land in a
+        // query string / log. Without creds we keep the lightweight GET.
+        if (smb is { HasCredentials: true })
+        {
+            var body = new Dictionary<string, object?> { ["path"] = path };
+            if (!string.IsNullOrWhiteSpace(smb.Username)) body["smbUsername"] = smb.Username;
+            if (!string.IsNullOrWhiteSpace(smb.Password)) body["smbPassword"] = smb.Password;
+            if (!string.IsNullOrWhiteSpace(smb.Domain)) body["smbDomain"] = smb.Domain;
+            return await PostJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/storage/stats", host, body, ct).ConfigureAwait(false);
+        }
+        return await GetJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/storage/stats?path={Uri.EscapeDataString(path)}", host, CreateClient(), ct).ConfigureAwait(false);
+    }
 
     public async Task<List<VmSnapshot>> GetVmsAsync(HyperVHost host, CancellationToken ct = default)
     {
@@ -73,17 +85,43 @@ public class AgentClient
         return result;
     }
 
-    public async Task<JsonObject?> PreflightBackupAsync(HyperVHost host, string vmNameOrId, string destination, CancellationToken ct = default)
+    public async Task<JsonObject?> PreflightBackupAsync(HyperVHost host, string vmNameOrId, string destination, SmbCredentials? smb = null, CancellationToken ct = default)
     {
-        var body = new { vmNameOrId, destination };
+        var body = BuildBackupBody(vmNameOrId, destination, smb);
         return await PostJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/backups/preflight", host, body, ct).ConfigureAwait(false);
     }
 
-    public async Task<AgentJob> EnqueueBackupAsync(HyperVHost host, string type, string vmNameOrId, string destination, CancellationToken ct = default)
+    public async Task<AgentJob> EnqueueBackupAsync(HyperVHost host, string type, string vmNameOrId, string destination, SmbCredentials? smb = null, CancellationToken ct = default)
     {
         var endpoint = type == JobTypes.Incremental ? "/jobs/backup-incremental" : "/jobs/backup-full";
-        var body = new { vmNameOrId, destination };
+        var body = BuildBackupBody(vmNameOrId, destination, smb);
         return await PostJobAsync($"{BuildBaseUrl(host)}{endpoint}", host, body, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Asks the agent to validate access to a storage path (optionally mounting
+    /// the SMB share with the given creds). Returns the agent's verdict + free space.</summary>
+    public async Task<JsonObject?> TestStorageAsync(HyperVHost host, string path, SmbCredentials? smb, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?> { ["path"] = path };
+        if (smb is { HasCredentials: true })
+        {
+            body["smbUsername"] = smb.Username;
+            body["smbPassword"] = smb.Password;
+            if (!string.IsNullOrWhiteSpace(smb.Domain)) body["smbDomain"] = smb.Domain;
+        }
+        return await PostJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/storage/test", host, body, ct).ConfigureAwait(false);
+    }
+
+    private static Dictionary<string, object?> BuildBackupBody(string vmNameOrId, string destination, SmbCredentials? smb)
+    {
+        var body = new Dictionary<string, object?> { ["vmNameOrId"] = vmNameOrId, ["destination"] = destination };
+        if (smb is { HasCredentials: true })
+        {
+            body["smbUsername"] = smb.Username;
+            body["smbPassword"] = smb.Password;
+            if (!string.IsNullOrWhiteSpace(smb.Domain)) body["smbDomain"] = smb.Domain;
+        }
+        return body;
     }
 
     public async Task<AgentJob> EnqueueVerifyChainAsync(HyperVHost host, string chainPath, CancellationToken ct = default)

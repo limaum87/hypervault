@@ -33,6 +33,7 @@ builder.Services.AddDbContext<ManagerDbContext>(opt => opt.UseSqlite(connStr));
 builder.Services.AddSingleton<IJobQueue, JobQueue>();
 builder.Services.AddSingleton<AgentClient>();
 builder.Services.AddSingleton<PasswordHasher>();
+builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddHostedService<JobRunnerWorker>();
 builder.Services.AddHostedService<SchedulerWorker>();
 builder.Services.AddHostedService<HostHealthWorker>();
@@ -132,6 +133,8 @@ using (var scope = app.Services.CreateScope())
     EnsureRestoreColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
     // Add Tags catalog + VmTags join (existing DBs created before tags existed).
     EnsureTagsSchema(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
+    // Add SMB credential columns to StorageTargets (existing DBs).
+    EnsureStorageCredentialsColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
 }
 
 static async Task WriteAuthStatusAsync(HttpContext ctx, int code, string errorCode, string message)
@@ -235,6 +238,30 @@ static void EnsureTagsSchema(ManagerDbContext db, Microsoft.Extensions.Logging.I
         logger.LogInformation("Seeded default tag catalog ({Count} tags).", defaults.Length);
     }
 }
+
+// Adds the SMB credential columns to StorageTargets (existing DBs created before SMB creds existed).
+static void EnsureStorageCredentialsColumns(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
+{
+    var existing = db.Database.SqlQueryRaw<string>(
+            "SELECT name FROM pragma_table_info('StorageTargets')")
+        .ToHashSet();
+    var add = new (string Col, string Ddl)[]
+    {
+        ("SmbUsername", "TEXT NULL"),
+        ("SmbDomain", "TEXT NULL"),
+        ("SmbPasswordCipher", "TEXT NULL"),
+    };
+    foreach (var (col, ddl) in add)
+    {
+        if (!existing.Contains(col))
+        {
+            db.Database.ExecuteSqlRaw($"ALTER TABLE StorageTargets ADD COLUMN \"{col}\" {ddl};");
+            logger.LogInformation("Added column StorageTargets.{Col}", col);
+        }
+    }
+}
+
+static string? TrimOrNull(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
 // Applies the friendly scheduling fields to a job, derives the cron and the
 // next-run time (in the job's own timezone).
@@ -607,22 +634,52 @@ api.MapGet("/storages", async (ManagerDbContext db) =>
     return Results.Ok(list.Select(Map.Storage));
 });
 
-api.MapPost("/storages", async (StorageCreateDto dto, ManagerDbContext db) =>
+api.MapPost("/storages", async (StorageCreateDto dto, ManagerDbContext db, SecretProtector secrets) =>
 {
     if (string.IsNullOrWhiteSpace(dto.Name)) throw new ArgumentException("Name is required");
     if (string.IsNullOrWhiteSpace(dto.Path)) throw new ArgumentException("Path is required");
-    var s = new StorageTarget { Name = dto.Name.Trim(), Type = dto.Type, Path = dto.Path, Notes = dto.Notes };
+    var s = new StorageTarget
+    {
+        Name = dto.Name.Trim(),
+        Type = dto.Type == StorageTypes.Smb ? StorageTypes.Smb : StorageTypes.LocalPath,
+        Path = dto.Path.Trim(),
+        Notes = dto.Notes,
+        SmbUsername = TrimOrNull(dto.SmbUsername),
+        SmbDomain = TrimOrNull(dto.SmbDomain),
+        SmbPasswordCipher = string.IsNullOrEmpty(dto.SmbPassword) ? null : secrets.Protect(dto.SmbPassword)
+    };
     db.Storages.Add(s); await db.SaveChangesAsync();
     return Results.Created($"/api/storages/{s.Id}", Map.Storage(s));
 });
 
-api.MapPut("/storages/{id:int}", async (int id, StorageCreateDto dto, ManagerDbContext db) =>
+api.MapPut("/storages/{id:int}", async (int id, StorageCreateDto dto, ManagerDbContext db, SecretProtector secrets) =>
 {
     var s = await db.Storages.FirstOrDefaultAsync(x => x.Id == id)
         ?? throw new InvalidOperationException($"Storage {id} not found");
-    s.Name = dto.Name.Trim(); s.Type = dto.Type; s.Path = dto.Path; s.Notes = dto.Notes;
+    s.Name = dto.Name.Trim();
+    s.Type = dto.Type == StorageTypes.Smb ? StorageTypes.Smb : StorageTypes.LocalPath;
+    s.Path = dto.Path.Trim();
+    s.Notes = dto.Notes;
+    s.SmbUsername = TrimOrNull(dto.SmbUsername);
+    s.SmbDomain = TrimOrNull(dto.SmbDomain);
+    // null password => keep the existing cipher; empty string => clear it.
+    if (dto.SmbPassword is null) { /* keep */ }
+    else if (dto.SmbPassword.Length == 0) s.SmbPasswordCipher = null;
+    else s.SmbPasswordCipher = secrets.Protect(dto.SmbPassword);
     await db.SaveChangesAsync();
     return Results.Ok(Map.Storage(s));
+});
+
+// Test SMB/storage access against a host agent using the inline credentials
+// from the form (works before saving). The agent mounts the share with `net use`
+// and reports success + free space. Returns the agent's verdict directly.
+api.MapPost("/storages/test", async (StorageTestDto dto, AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == dto.HostId)
+        ?? throw new InvalidOperationException($"Host {dto.HostId} not found");
+    if (string.IsNullOrWhiteSpace(dto.Path)) throw new ArgumentException("Path is required");
+    var creds = SmbCredentials.From(dto.SmbUsername, dto.SmbPassword, dto.SmbDomain);
+    return Results.Ok(await agent.TestStorageAsync(host, dto.Path.Trim(), creds, ct));
 });
 
 api.MapDelete("/storages/{id:int}", async (int id, ManagerDbContext db) =>
@@ -636,7 +693,7 @@ api.MapDelete("/storages/{id:int}", async (int id, ManagerDbContext db) =>
 // Aggregate disk capacity for every storage/vault. For each storage we look up a
 // host that backs up to it (via jobs) and ask its agent for the volume stats of the
 // storage path. Returns a map { storageId: StorageStatsDto | null }.
-api.MapGet("/storages/stats", async (AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+api.MapGet("/storages/stats", async (AgentClient agent, ManagerDbContext db, SecretProtector secrets, CancellationToken ct) =>
 {
     var storages = await db.Storages.AsNoTracking().ToListAsync(ct);
     var jobs = await db.Jobs.Include(j => j.Host).AsNoTracking().ToListAsync(ct);
@@ -660,7 +717,10 @@ api.MapGet("/storages/stats", async (AgentClient agent, ManagerDbContext db, Can
         {
             try
             {
-                var stats = await agent.GetStorageStatsAsync(host, s.Path, storageCts.Token).ConfigureAwait(false);
+                var smb = s.Type == StorageTypes.Smb
+                    ? SmbCredentials.From(s.SmbUsername, secrets.Unprotect(s.SmbPasswordCipher), s.SmbDomain)
+                    : null;
+                var stats = await agent.GetStorageStatsAsync(host, s.Path, smb, storageCts.Token).ConfigureAwait(false);
                 if (stats is null) continue;
                 var total = stats["totalBytes"]?.GetValue<long>() ?? 0;
                 if (total <= 0) continue;
@@ -1099,7 +1159,8 @@ static class Map
         h.Notes, !string.IsNullOrWhiteSpace(h.ApiToken), vmCount);
 
     public static StorageViewDto Storage(StorageTarget s) =>
-        new(s.Id, s.Name, s.Type, s.Path, s.Notes, s.CreatedAt);
+        new(s.Id, s.Name, s.Type, s.Path, s.Notes, s.CreatedAt,
+            s.SmbUsername, s.SmbDomain, !string.IsNullOrWhiteSpace(s.SmbPasswordCipher));
 
     public static VmViewDto Vm(VirtualMachine v, string hostName, BackupRun? last = null, IReadOnlyList<BackupRun>? history = null) => new(
         v.Id, v.HostId, hostName, v.ExternalId, v.Name, v.State, v.Generation, v.MemoryBytes,

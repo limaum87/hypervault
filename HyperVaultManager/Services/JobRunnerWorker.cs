@@ -12,18 +12,20 @@ public class JobRunnerWorker : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly IJobQueue _queue;
     private readonly AgentClient _agent;
+    private readonly SecretProtector _secrets;
     private readonly ILogger<JobRunnerWorker> _logger;
     private readonly TimeSpan _poll;
     private readonly TimeSpan _backupTimeout;
     private readonly TimeSpan _verifyTimeout;
     private readonly TimeSpan _restoreTimeout;
 
-    public JobRunnerWorker(IServiceScopeFactory scopes, IJobQueue queue, AgentClient agent, ILogger<JobRunnerWorker> logger,
+    public JobRunnerWorker(IServiceScopeFactory scopes, IJobQueue queue, AgentClient agent, SecretProtector secrets, ILogger<JobRunnerWorker> logger,
         IConfiguration cfg)
     {
         _scopes = scopes;
         _queue = queue;
         _agent = agent;
+        _secrets = secrets;
         _logger = logger;
         _poll = TimeSpan.FromSeconds(cfg.GetValue("Manager:JobPollIntervalSeconds", 5));
         _backupTimeout = TimeSpan.FromHours(cfg.GetValue("Manager:BackupTimeoutHours", 8));
@@ -66,6 +68,14 @@ public class JobRunnerWorker : BackgroundService
         }
     }
 
+    /// <summary>Builds SMB credentials for a storage target, decrypting the password.
+    /// Returns null for non-SMB storages or when no username/password is set.</summary>
+    private SmbCredentials? StorageCreds(StorageTarget s)
+    {
+        if (s.Type != StorageTypes.Smb) return null;
+        return SmbCredentials.From(s.SmbUsername, _secrets.Unprotect(s.SmbPasswordCipher), s.SmbDomain);
+    }
+
     private async Task RunBackupAsync(ManagerDbContext db, int runId, CancellationToken stop)
     {
         var run = await db.BackupRuns.Include(x => x.Host).Include(x => x.Vm).Include(x => x.Storage)
@@ -76,6 +86,8 @@ public class JobRunnerWorker : BackgroundService
         }
 
         var destination = run.Storage.Path;
+        // Decrypt SMB credentials (if any) so the agent can mount the share.
+        var smb = StorageCreds(run.Storage);
         await MarkRunning(db, run, stop);
 
         try
@@ -83,14 +95,14 @@ public class JobRunnerWorker : BackgroundService
             // 1) Preflight (best effort, per WEB_AGENT_HANDOFF)
             try
             {
-                var pre = await _agent.PreflightBackupAsync(run.Host, run.Vm.ExternalId, destination, stop);
+                var pre = await _agent.PreflightBackupAsync(run.Host, run.Vm.ExternalId, destination, smb, stop);
                 if (pre is not null && TryGetBool(pre, "canProceed") is false)
                     throw new InvalidOperationException($"Preflight blocked: {pre.ToJsonString()}");
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Preflight failed for run {Id} (continuing)", runId); }
 
             // 2) Enqueue agent job
-            var agentJob = await _agent.EnqueueBackupAsync(run.Host, run.Type, run.Vm.ExternalId, destination, stop);
+            var agentJob = await _agent.EnqueueBackupAsync(run.Host, run.Type, run.Vm.ExternalId, destination, smb, stop);
             run.AgentJobId = agentJob.JobId;
             await Save(db, stop);
 
