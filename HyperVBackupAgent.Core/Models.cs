@@ -109,7 +109,8 @@ public sealed record BackupResult(
     BackupType Type,
     BackupStatus Status,
     string Path,
-    string? Error = null);
+    string? Error = null,
+    long SizeBytes = 0);
 
 public sealed record RestorePointSummary(
     string ChainId,

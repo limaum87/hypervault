@@ -44,6 +44,10 @@ public class AgentClient
     public async Task<JsonArray?> GetRestorePointsAsync(HyperVHost host, string vmExternalId, CancellationToken ct = default)
         => await GetJsonAsync<JsonArray>($"{BuildBaseUrl(host)}/vms/{Uri.EscapeDataString(vmExternalId)}/restore-points", host, CreateClient(), ct).ConfigureAwait(false);
 
+    /// <summary>Total/free/used bytes for the volume that hosts a storage path, as reported by the agent.</summary>
+    public async Task<JsonObject?> GetStorageStatsAsync(HyperVHost host, string path, CancellationToken ct = default)
+        => await GetJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/storage/stats?path={Uri.EscapeDataString(path)}", host, CreateClient(), ct).ConfigureAwait(false);
+
     public async Task<List<VmSnapshot>> GetVmsAsync(HyperVHost host, CancellationToken ct = default)
     {
         var arr = await GetJsonAsync<JsonArray>($"{BuildBaseUrl(host)}/vms", host, CreateClient(), ct).ConfigureAwait(false);

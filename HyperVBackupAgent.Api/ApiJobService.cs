@@ -95,7 +95,8 @@ public sealed class ApiJobService
                     Status = ApiJobStatus.Completed,
                     CompletedAt = DateTimeOffset.UtcNow,
                     ResultPath = outcome.ResultPath,
-                    Message = outcome.Message
+                    Message = outcome.Message,
+                    SizeBytes = outcome.SizeBytes
                 });
                 _logger.LogInformation("API job {JobId} completed", jobId);
             }
@@ -211,6 +212,7 @@ public sealed record ApiJobRecord(
     string? ResultPath,
     string? Error,
     string? CorrelationId = null,
-    string? Message = null);
+    string? Message = null,
+    long SizeBytes = 0);
 
-public sealed record ApiJobOutcome(string? ResultPath = null, string? Message = null);
+public sealed record ApiJobOutcome(string? ResultPath = null, string? Message = null, long SizeBytes = 0);

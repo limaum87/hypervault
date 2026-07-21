@@ -220,6 +220,18 @@ tbody tr:hover { background: #fafafa; }
 .sh-bar.h-error { background: #f87171; }
 .sh-bar.h-unavailable { background: #e5e7eb; }
 
+/* ============================================================ VAULT / STORAGE SPACE */
+.cell-space { min-width: 190px; }
+.space-cell { display: flex; flex-direction: column; gap: 4px; }
+.space-top { font-size: 13px; display: flex; gap: 5px; align-items: baseline; flex-wrap: wrap; }
+.space-track { height: 6px; border-radius: 999px; background: #eef2f7; overflow: hidden; }
+.space-fill { height: 100%; border-radius: 999px; transition: width .35s ease; }
+.space-fill.ok { background: var(--ok); }
+.space-fill.warn { background: var(--warn); }
+.space-fill.danger { background: #ef4444; }
+.space-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+.space-foot .muted { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ============================================================ LAST ONLINE */
 .last-online { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-dim); }
 .last-online .lo-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); flex: none; }

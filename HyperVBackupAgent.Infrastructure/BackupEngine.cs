@@ -85,7 +85,7 @@ public sealed class BackupEngine : IBackupEngine
             };
 
             await _metadata.SaveChainAsync(chainDirectory, chain, cancellationToken);
-            return new BackupResult(backupId, chainId, BackupType.Full, BackupStatus.Completed, chainDirectory);
+            return new BackupResult(backupId, chainId, BackupType.Full, BackupStatus.Completed, chainDirectory, SizeBytes: backup.SizeBytes);
         }
         catch (Exception ex)
         {
@@ -155,7 +155,7 @@ public sealed class BackupEngine : IBackupEngine
             chain.RestorePoints.Add(backup);
             chain.LatestRestorePoint = backupId;
             await _metadata.SaveChainAsync(chainDirectory, chain, cancellationToken);
-            return new BackupResult(backupId, chain.ChainId, BackupType.Incremental, BackupStatus.Completed, chainDirectory);
+            return new BackupResult(backupId, chain.ChainId, BackupType.Incremental, BackupStatus.Completed, chainDirectory, SizeBytes: backup.SizeBytes);
         }
         catch (Exception ex)
         {

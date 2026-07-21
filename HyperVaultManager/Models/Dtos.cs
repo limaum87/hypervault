@@ -38,6 +38,9 @@ public record HostViewDto(
 public record StorageCreateDto(string Name, string Type, string Path, string? Notes);
 public record StorageViewDto(int Id, string Name, string Type, string Path, string? Notes, DateTimeOffset CreatedAt);
 
+/// <summary>Disk capacity of a storage/vault, resolved via one of the hosts that backs up to it.</summary>
+public record StorageStatsDto(long TotalBytes, long FreeBytes, long UsedBytes, string SourceHostName);
+
 // ---- VMs ----
 public record VmViewDto(
     int Id,

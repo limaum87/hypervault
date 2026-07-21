@@ -27,6 +27,7 @@ builder.Services.AddSingleton<ApiJobService>();
 builder.Services.AddSingleton<ApiAgentInfoService>();
 builder.Services.AddSingleton<ApiPreflightService>();
 builder.Services.AddSingleton<ApiHealthService>();
+builder.Services.AddSingleton<ApiStorageStatsService>();
 builder.Services.AddHostedService<ApiFileLevelRestoreCleanupWorker>();
 
 var app = builder.Build();
@@ -121,6 +122,18 @@ app.MapGet("/agent/certificate", (IConfiguration configuration, IWebHostEnvironm
         ? Results.NotFound(new ApiError("certificate_not_found", "API certificate has not been generated or configured yet.", string.Empty))
         : Results.Ok(certificate);
 });
+
+// Reports the total / free / used bytes for the volume that hosts a storage path.
+// The path must be inside the agent's allowed roots (same rule as backup destinations).
+app.MapGet("/storage/stats", (string path, ApiPathValidator paths, ApiStorageStatsService stats) =>
+{
+    if (string.IsNullOrWhiteSpace(path))
+    {
+        throw new ArgumentException("path is required.");
+    }
+    var validated = paths.ValidateAbsolutePath(path, nameof(path));
+    return Results.Ok(stats.GetStats(validated));
+});
 app.MapGet("/jobs", (ApiJobService jobs) => Results.Ok(jobs.ListJobs()));
 app.MapGet("/jobs/{id}", (string id, ApiJobService jobs) =>
 {
@@ -140,7 +153,7 @@ app.MapPost("/jobs/backup-full", ([FromBody] BackupRequest request, IBackupEngin
             throw new InvalidOperationException(result.Error ?? "Full backup failed.");
         }
 
-        return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}");
+        return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}", result.SizeBytes);
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });
@@ -155,7 +168,7 @@ app.MapPost("/jobs/backup-incremental", ([FromBody] BackupRequest request, IBack
             throw new InvalidOperationException(result.Error ?? "Incremental backup failed.");
         }
 
-        return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}");
+        return new ApiJobOutcome(result.Path, $"{result.Type} backup completed: {result.BackupId}", result.SizeBytes);
     }, context.TraceIdentifier);
     return Results.Accepted($"/jobs/{job.JobId}", job);
 });

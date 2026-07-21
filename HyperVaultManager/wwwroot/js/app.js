@@ -17,6 +17,12 @@ function fmtBytes(n) {
   const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
   return `${(n / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`;
 }
+// Like fmtBytes but renders 0 as "0 B" (useful for free/total disk space).
+function fmtBytesFixed(n) {
+  n = Number(n || 0);
+  if (!n) return "0 B";
+  return fmtBytes(n);
+}
 function fmtDate(iso) {
   if (!iso) return `<span class="muted">${t("common.never")}</span>`;
   const d = new Date(iso);
@@ -592,24 +598,61 @@ async function runBackupVm(hostId, vmId) {
 async function viewStorages() {
   setTopbar("storages.title", `<button class="btn primary" onclick="storageForm()">${IC("plus", 16)} <span data-i18n="storages.add">${t("storages.add")}</span></button>`);
   const list = await api.get("/api/storages");
-  let html = `<div class="table-wrap"><table>
+  let html = `<div class="table-wrap scroll-x"><table>
     <thead><tr>
       <th data-i18n="common.name">${t("common.name")}</th>
       <th data-i18n="storages.type">${t("storages.type")}</th>
       <th data-i18n="storages.path">${t("storages.path")}</th>
+      <th data-i18n="storages.space">${t("storages.space")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!list.length) html += emptyRow(4, "database", "storages.empty");
+  if (!list.length) html += emptyRow(5, "database", "storages.empty");
   else html += list.map(s => `<tr>
     <td><strong>${esc(s.name)}</strong></td>
     <td>${esc(t(`storages.types.${s.type}`))}</td>
     <td class="cell-mono">${esc(s.path)}</td>
+    <td class="cell-space" id="space-${s.id}"><span class="muted">${t("common.loading") || "…"}</span></td>
     <td class="t-actions">
       <button class="btn sm icon-only" onclick="storageForm(${s.id})" title="${esc(t("common.edit"))}">${IC("pencil", 14)}</button>
       <button class="btn sm icon-only danger" onclick="delStorage(${s.id},'${esc(s.name)}')" title="${esc(t("common.delete"))}">${IC("trash-2", 14)}</button>
     </td></tr>`).join("");
   html += `</tbody></table></div>`;
   $("#view").innerHTML = html; i18n.apply($("#view"));
+  if (list.length) loadStorageStats(list.map(s => s.id));
+}
+
+// Fetch disk capacity (total/free) for each vault in parallel and fill the cells.
+async function loadStorageStats(ids) {
+  let stats;
+  try { stats = await api.get("/api/storages/stats"); }
+  catch (e) {
+    ids.forEach(id => fillStorageSpace(id, null, e.message));
+    return;
+  }
+  ids.forEach(id => fillStorageSpace(id, stats[id] || stats[String(id)] || null));
+}
+
+function fillStorageSpace(id, st, errMsg) {
+  const cell = document.getElementById(`space-${id}`);
+  if (!cell) return;
+  if (!st || !st.totalBytes) {
+    cell.innerHTML = `<span class="muted">${esc(t("storages.space_unavailable"))}</span>`;
+    if (errMsg) cell.title = esc(errMsg);
+    return;
+  }
+  cell.innerHTML = storageSpaceCell(st.totalBytes, st.freeBytes, st.sourceHostName);
+}
+
+function storageSpaceCell(total, free, sourceHost) {
+  const used = Math.max(0, total - free);
+  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  const cls = pct >= 90 ? "danger" : pct >= 75 ? "warn" : "ok";
+  return `<div class="space-cell">
+    <div class="space-top"><strong class="cell-mono">${fmtBytesFixed(free)}</strong>
+      <span class="muted">/ ${fmtBytesFixed(total)}</span></div>
+    <div class="space-track"><div class="space-fill ${cls}" style="width:${pct}%"></div></div>
+    <div class="space-foot"><span class="muted">${pct}% ${esc(t("storages.used"))}</span>${sourceHost ? `<span class="muted" title="${esc(sourceHost)}">${esc(sourceHost)}</span>` : ""}</div>
+  </div>`;
 }
 
 async function storageForm(id = null) {

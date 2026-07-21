@@ -587,6 +587,50 @@ api.MapDelete("/storages/{id:int}", async (int id, ManagerDbContext db) =>
     return Results.NoContent();
 });
 
+// Aggregate disk capacity for every storage/vault. For each storage we look up a
+// host that backs up to it (via jobs) and ask its agent for the volume stats of the
+// storage path. Returns a map { storageId: StorageStatsDto | null }.
+api.MapGet("/storages/stats", async (AgentClient agent, ManagerDbContext db, CancellationToken ct) =>
+{
+    var storages = await db.Storages.AsNoTracking().ToListAsync(ct);
+    var jobs = await db.Jobs.Include(j => j.Host).AsNoTracking().ToListAsync(ct);
+    var hostsByStorage = jobs
+        .Where(j => j.Host is not null)
+        .GroupBy(j => j.StorageId)
+        .ToDictionary(g => g.Key, g => g.Select(j => j.Host!).DistinctBy(h => h.Id).ToList());
+
+    async Task<KeyValuePair<int, StorageStatsDto?>> ResolveAsync(StorageTarget s)
+    {
+        // Cap each storage's resolution so one slow/offline host can't stall the panel.
+        using var storageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        storageCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+        if (!hostsByStorage.TryGetValue(s.Id, out var hosts) || hosts.Count == 0)
+        {
+            return new(s.Id, null);
+        }
+
+        foreach (var host in hosts)
+        {
+            try
+            {
+                var stats = await agent.GetStorageStatsAsync(host, s.Path, storageCts.Token).ConfigureAwait(false);
+                if (stats is null) continue;
+                var total = stats["totalBytes"]?.GetValue<long>() ?? 0;
+                if (total <= 0) continue;
+                var free = stats["freeBytes"]?.GetValue<long>() ?? 0;
+                return new(s.Id, new StorageStatsDto(total, free, Math.Max(0, total - free), host.Name));
+            }
+            catch (OperationCanceledException) when (storageCts.IsCancellationRequested) { break; }
+            catch { /* host unreachable / rejected path — try the next one */ }
+        }
+        return new(s.Id, null);
+    }
+
+    var resolved = await Task.WhenAll(storages.Select(ResolveAsync));
+    return Results.Ok(resolved.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => (object?)kv.Value));
+});
+
 // ---------- VMS ----------
 api.MapGet("/vms", async (int? hostId, ManagerDbContext db) =>
 {
