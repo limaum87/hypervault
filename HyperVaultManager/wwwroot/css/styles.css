@@ -263,6 +263,23 @@ tbody tr:hover { background: #fafafa; }
 .tag-personal { background: #ecfdf5; color: #047857; }
 .tag-prod { background: #fef2f2; color: #b91c1c; }
 
+/* tag cell in the VM table: chips + manage button */
+.tag-cell { display: inline-flex; align-items: center; gap: 6px; }
+.tag-manage-btn { padding: 4px; color: var(--text-mute); }
+.tag-manage-btn:hover { color: var(--text); background: var(--bg-soft); }
+.small { font-size: 12px; }
+
+/* tag editor modal */
+.tag-editor { display: flex; flex-direction: column; gap: 12px; }
+.tag-editor-vm { font-weight: 600; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); font-size: 12px; font-weight: 500; cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+.tag-chip:hover { border-color: var(--accent); color: var(--accent); }
+.tag-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tag-new { display: flex; gap: 8px; align-items: center; }
+.tag-new input { flex: 1; }
+.tag-hint { line-height: 1.4; }
+
 /* ============================================================ FORMS */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .form-grid .full { grid-column: 1 / -1; }

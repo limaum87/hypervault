@@ -17,12 +17,24 @@ public class ManagerDbContext : DbContext
     public DbSet<VerificationRun> VerificationRuns => Set<VerificationRun>();
     public DbSet<RestoreRun> RestoreRuns => Set<RestoreRun>();
     public DbSet<AppUser> Users => Set<AppUser>();
+    public DbSet<Tag> Tags => Set<Tag>();
+    public DbSet<VmTag> VmTags => Set<VmTag>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<HyperVHost>().HasIndex(x => x.Name).IsUnique();
         b.Entity<AppUser>().HasIndex(x => x.Username).IsUnique();
         b.Entity<HyperVHost>().Property(x => x.ApiToken).IsRequired();
+
+        // Tags: reusable catalog + NxN with VirtualMachine.
+        b.Entity<Tag>().HasIndex(x => x.Key).IsUnique();
+        b.Entity<Tag>().Property(x => x.Key).IsRequired();
+        b.Entity<Tag>().Property(x => x.Label).IsRequired();
+        b.Entity<VmTag>().HasKey(x => new { x.VmId, x.TagId });
+        b.Entity<VmTag>().HasOne(x => x.Vm).WithMany(v => v.VmTags)
+            .HasForeignKey(x => x.VmId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<VmTag>().HasOne(x => x.Tag).WithMany(t => t.VmTags)
+            .HasForeignKey(x => x.TagId).OnDelete(DeleteBehavior.Cascade);
 
         b.Entity<VirtualMachine>().HasIndex(x => new { x.HostId, x.ExternalId }).IsUnique();
         b.Entity<VirtualMachine>().HasOne(x => x.Host)

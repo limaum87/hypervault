@@ -106,25 +106,18 @@ function mapBackupStatusToHealth(s) {
   if (s === "running" || s === "queued") return "h-warning";
   return "h-healthy";
 }
-function TagBadge(tag) { return `<span class="tag tag-${tag.key}">${esc(tag.label)}</span>`; }
+function TagBadge(tag) {
+  const style = tag.color ? ` style="background:${esc(tag.color)}"` : "";
+  return `<span class="tag tag-${tag.key}"${style}>${esc(tag.label)}</span>`;
+}
 function ActionButton(label, onclick, opts = {}) {
   return `<button class="btn-detail" onclick="${onclick}">${opts.icon ? IC(opts.icon, 14) + " " : ""}${esc(label)}</button>`;
 }
 
-/* deterministic helpers for machine visuals */
-function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-
-const TAG_SET = [
-  { key: "prod", label: "Prod" }, { key: "projects", label: "Projects" },
-  { key: "essential", label: "Essential" }, { key: "work", label: "Work" },
-  { key: "archive", label: "Archive" }, { key: "personal", label: "Personal" }
-];
 function vmTags(vm) {
-  const h = hashStr((vm.name || "") + ":" + (vm.id || ""));
-  const n = 1 + (h % 2);
-  const pool = TAG_SET.slice(); const out = []; let r = h;
-  for (let i = 0; i < n && pool.length; i++) { r = (Math.imul(r, 2654435761) >>> 0); out.push(pool.splice(r % pool.length, 1)[0]); }
-  return out;
+  // Real tags come from the API (vm.tags). Rendered read-only in the table;
+  // the "manage tags" button opens an editor modal (see manageTagsVm).
+  return Array.isArray(vm && vm.tags) ? vm.tags : [];
 }
 function fmtRelativeShort(iso) {
   if (!iso) return t("common.never");
@@ -556,7 +549,10 @@ function renderVmTable() {
       <td>${StatusHistory(v)}</td>
       <td><span class="state-pill ${on ? "on" : "off"}">${esc(v.state || "—")}</span></td>
       <td class="cell-disk">${fmtBytes(v.diskSizeBytes)}</td>
-      <td><span class="tag-list">${tags.map(TagBadge).join("")}</span></td>
+      <td><div class="tag-cell">
+        <span class="tag-list">${tags.length ? tags.map(TagBadge).join("") : `<span class="muted small">${esc(t("vms.no_tags"))}</span>`}</span>
+        <button class="icon-btn tag-manage-btn" title="${esc(t("vms.manage_tags"))}" onclick="manageTagsVm(${v.id})">${IC("pencil", 14)}</button>
+      </div></td>
       <td>${lastBackup}</td>
       <td>${vmActions(v)}</td>
     </tr>`;
@@ -569,6 +565,92 @@ function vmActions(v) {
     ${ActionButton(t("vms.backup_now"), `backupVm(${v.hostId},${v.id},'${esc(v.name)}')`, { icon: "archive" })}
     <button class="icon-btn" title="${esc(t("common.more"))}">${IC("more-horizontal", 16)}</button>
   </div>`;
+}
+
+/* ---------- tag editor (modal) ---------- */
+let _tagEdit = null; // { vmId, vmName, catalog:[{id,key,label,color}], selected:Set<int> }
+
+async function manageTagsVm(vmId) {
+  const vm = ((vmStore && vmStore.vms) || []).find(v => v.id === vmId);
+  if (!vm) return;
+  let catalog;
+  try { catalog = await api.get("/api/tags"); }
+  catch (e) { toast(e.message, "err"); return; }
+  _tagEdit = {
+    vmId,
+    vmName: vm.name || "",
+    catalog,
+    selected: new Set((vm.tags || []).map(tg => tg.id))
+  };
+  openModal("vms.manage_tags", tagEditorBodyHtml(), tagEditorFootHtml());
+  i18n.apply($("#modalRoot"));
+  paint($("#modalRoot"));
+  renderTagChips();
+  const inp = $("#tagNewLabel"); if (inp) inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTagFromEditor(); } });
+}
+
+function tagEditorBodyHtml() {
+  return `
+  <div class="tag-editor">
+    <div class="muted small tag-editor-vm">${esc(_tagEdit.vmName)}</div>
+    <div class="tag-chips" id="tagChips"></div>
+    <div class="tag-new">
+      <input id="tagNewLabel" type="text" placeholder="${esc(t("vms.new_tag_placeholder"))}" />
+      <button class="btn" onclick="addTagFromEditor()">${IC("plus", 14)} <span data-i18n="common.add">${t("common.add")}</span></button>
+    </div>
+    <div class="muted small tag-hint">${esc(t("vms.tags_hint"))}</div>
+  </div>`;
+}
+
+function tagEditorFootHtml() {
+  return `
+  <button class="btn ghost" data-close>${IC("x", 14)} <span data-i18n="common.cancel">${t("common.cancel")}</span></button>
+  <button class="btn primary" onclick="saveTagsEditor()"><span data-i18n="common.save">${t("common.save")}</span></button>`;
+}
+
+function renderTagChips() {
+  const el = $("#tagChips"); if (!el || !_tagEdit) return;
+  if (!_tagEdit.catalog.length) {
+    el.innerHTML = `<span class="muted small">${esc(t("vms.tags_empty_catalog"))}</span>`;
+    return;
+  }
+  el.innerHTML = _tagEdit.catalog.map(tg => {
+    const on = _tagEdit.selected.has(tg.id);
+    const style = (on && tg.color) ? ` style="background:${esc(tg.color)};border-color:${esc(tg.color)}"` : "";
+    return `<button type="button" class="tag-chip${on ? " on" : ""}"${style} onclick="toggleTagChip(${tg.id})">${esc(tg.label)}${on ? ` ${IC("check", 12)}` : ""}</button>`;
+  }).join("");
+}
+
+function toggleTagChip(id) {
+  if (!_tagEdit) return;
+  if (_tagEdit.selected.has(id)) _tagEdit.selected.delete(id);
+  else _tagEdit.selected.add(id);
+  renderTagChips();
+}
+
+async function addTagFromEditor() {
+  if (!_tagEdit) return;
+  const inp = $("#tagNewLabel");
+  const label = (inp && inp.value || "").trim();
+  if (!label) return;
+  const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || ("tag" + Date.now());
+  try {
+    const created = await api.post("/api/tags", { key, label });
+    _tagEdit.catalog.push(created);
+    _tagEdit.selected.add(created.id);
+    if (inp) inp.value = "";
+    renderTagChips();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function saveTagsEditor() {
+  if (!_tagEdit) return;
+  try {
+    await api.put(`/api/vms/${_tagEdit.vmId}/tags`, { tagIds: Array.from(_tagEdit.selected) });
+    closeModal();
+    toast(t("toast.success"), "ok");
+    await refreshVms();
+  } catch (e) { toast(e.message, "err"); }
 }
 
 async function backupVm(hostId, vmId, vmName) {

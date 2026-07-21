@@ -130,6 +130,8 @@ using (var scope = app.Services.CreateScope())
     EnsureJobsScheduleColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
     // Add Mode + source VM columns to RestoreRuns if missing (existing DBs).
     EnsureRestoreColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
+    // Add Tags catalog + VmTags join (existing DBs created before tags existed).
+    EnsureTagsSchema(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
 }
 
 static async Task WriteAuthStatusAsync(HttpContext ctx, int code, string errorCode, string message)
@@ -187,6 +189,50 @@ static void EnsureRestoreColumns(ManagerDbContext db, Microsoft.Extensions.Loggi
             db.Database.ExecuteSqlRaw($"ALTER TABLE RestoreRuns ADD COLUMN \"{col}\" {ddl};");
             logger.LogInformation("Added column RestoreRuns.{Col}", col);
         }
+    }
+}
+
+// Adds the Tags catalog + VmTags join introduced for real VM tagging.
+// Works on DBs created by EnsureCreated before tags existed (no EF migrations).
+static void EnsureTagsSchema(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
+{
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "Tags" (
+            "Id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "Key" TEXT NOT NULL,
+            "Label" TEXT NOT NULL,
+            "Color" TEXT NOT NULL DEFAULT ''
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_Tags_Key" ON "Tags" ("Key");
+        """);
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "VmTags" (
+            "VmId" INTEGER NOT NULL,
+            "TagId" INTEGER NOT NULL,
+            PRIMARY KEY ("VmId", "TagId"),
+            FOREIGN KEY ("VmId") REFERENCES "VirtualMachines" ("Id") ON DELETE CASCADE,
+            FOREIGN KEY ("TagId") REFERENCES "Tags" ("Id") ON DELETE CASCADE
+        );
+        """);
+
+    // Seed the default catalog once (idempotent).
+    if (!db.Tags.Any())
+    {
+        var defaults = new (string Key, string Label, string Color)[]
+        {
+            ("prod", "Prod", ""),
+            ("projects", "Projects", ""),
+            ("essential", "Essential", ""),
+            ("work", "Work", ""),
+            ("archive", "Archive", ""),
+            ("personal", "Personal", ""),
+        };
+        foreach (var (key, label, color) in defaults)
+            db.Tags.Add(new Tag { Key = key, Label = label, Color = color });
+        db.SaveChanges();
+        logger.LogInformation("Seeded default tag catalog ({Count} tags).", defaults.Length);
     }
 }
 
@@ -634,7 +680,7 @@ api.MapGet("/storages/stats", async (AgentClient agent, ManagerDbContext db, Can
 // ---------- VMS ----------
 api.MapGet("/vms", async (int? hostId, ManagerDbContext db) =>
 {
-    var q = db.VirtualMachines.Include(v => v.Host).AsQueryable();
+    var q = db.VirtualMachines.Include(v => v.Host).Include(v => v.VmTags).ThenInclude(vt => vt.Tag).AsQueryable();
     if (hostId.HasValue) q = q.Where(v => v.HostId == hostId);
     var list = await q.OrderByDescending(v => v.Name).ToListAsync();
     var result = new List<VmViewDto>();
@@ -649,6 +695,59 @@ api.MapGet("/vms", async (int? hostId, ManagerDbContext db) =>
         result.Add(Map.Vm(v, v.Host?.Name ?? "", last, history));
     }
     return Results.Ok(result);
+});
+
+// ---------- TAGS ----------
+// Catalog: list all tags (used by the VM tag picker).
+api.MapGet("/tags", async (ManagerDbContext db) =>
+{
+    var tags = await db.Tags.OrderBy(t => t.Label).ToListAsync();
+    return Results.Ok(tags.Select(Map.Tag));
+});
+
+// Create a new tag in the catalog.
+api.MapPost("/tags", async (TagCreateDto dto, ManagerDbContext db) =>
+{
+    var key = (dto.Key ?? "").Trim().ToLowerInvariant();
+    var label = string.IsNullOrWhiteSpace(dto.Label) ? key : dto.Label.Trim();
+    if (string.IsNullOrWhiteSpace(key))
+        throw new ArgumentException("Tag key is required.");
+    if (await db.Tags.AnyAsync(t => t.Key == key))
+        throw new InvalidOperationException($"A tag with key '{key}' already exists");
+    var tag = new Tag { Key = key, Label = label, Color = (dto.Color ?? "").Trim() };
+    db.Tags.Add(tag); await db.SaveChangesAsync();
+    return Results.Created($"/api/tags/{tag.Id}", Map.Tag(tag));
+});
+
+// Delete a tag from the catalog (cascade-removes all VM assignments).
+api.MapDelete("/tags/{id:int}", async (int id, ManagerDbContext db) =>
+{
+    var tag = await db.Tags.FirstOrDefaultAsync(t => t.Id == id)
+        ?? throw new InvalidOperationException($"Tag {id} not found");
+    db.Tags.Remove(tag); await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+// Replace a VM's tags with the given set (full replace semantics).
+api.MapPut("/vms/{vmId:int}/tags", async (int vmId, VmTagsAssignDto dto, ManagerDbContext db) =>
+{
+    var vm = await db.VirtualMachines.Include(v => v.VmTags).FirstOrDefaultAsync(v => v.Id == vmId)
+        ?? throw new InvalidOperationException($"VM {vmId} not found");
+    var desired = (dto?.TagIds ?? Array.Empty<int>()).Distinct().ToHashSet();
+    // drop assignments no longer desired
+    foreach (var existing in vm.VmTags.Where(vt => !desired.Contains(vt.TagId)).ToList())
+        db.VmTags.Remove(existing);
+    // add new ones (only if the tag exists)
+    var validIds = (await db.Tags.Where(t => desired.Contains(t.Id)).Select(t => t.Id).ToListAsync()).ToHashSet();
+    foreach (var tid in desired.Where(id => validIds.Contains(id) && !vm.VmTags.Any(vt => vt.TagId == id)))
+        vm.VmTags.Add(new VmTag { TagId = tid });
+    await db.SaveChangesAsync();
+    // return refreshed tag list
+    var fresh = await db.VirtualMachines.Include(v => v.VmTags).ThenInclude(vt => vt.Tag)
+        .FirstOrDefaultAsync(v => v.Id == vmId);
+    return Results.Ok((fresh?.VmTags ?? new List<VmTag>())
+        .Where(vt => vt.Tag != null)
+        .Select(vt => Map.Tag(vt.Tag)).ToList());
 });
 
 // ---------- JOBS ----------
@@ -1007,7 +1106,13 @@ static class Map
         v.DiskSizeBytes, v.LastSyncedAt, last?.CompletedAt, last?.Status,
         (history ?? Array.Empty<BackupRun>())
             .Select(r => new BackupHistoryEntryDto(r.Status, r.CompletedAt ?? r.QueuedAt))
+            .ToList(),
+        (v.VmTags ?? new List<VmTag>())
+            .Where(vt => vt.Tag != null)
+            .Select(vt => new TagDto(vt.Tag.Id, vt.Tag.Key, vt.Tag.Label, vt.Tag.Color ?? ""))
             .ToList());
+
+    public static TagDto Tag(Tag t) => new(t.Id, t.Key, t.Label, t.Color ?? "");
 
     public static JobViewDto Job(BackupJob j) => new(
         j.Id, j.Name, j.HostId, j.Host?.Name ?? "", j.VmId, j.Vm?.Name ?? j.Vm?.ExternalId ?? "",

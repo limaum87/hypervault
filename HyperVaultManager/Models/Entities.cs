@@ -47,7 +47,29 @@ public class VirtualMachine
     public long DiskSizeBytes { get; set; }
     public DateTimeOffset? LastSyncedAt { get; set; }
 
+    /// <summary>Tags assigned to this VM (join VmTag -> Tag).</summary>
+    public List<VmTag> VmTags { get; set; } = new();
+
     public string Display => string.IsNullOrWhiteSpace(Name) ? ExternalId : Name;
+}
+
+/// <summary>A reusable label that can be attached to VMs (Prod, Work, ...).</summary>
+public class Tag
+{
+    public int Id { get; set; }
+    public string Key { get; set; } = string.Empty;   // slug, unique (e.g. "prod")
+    public string Label { get; set; } = string.Empty; // display text
+    public string Color { get; set; } = string.Empty; // optional hex / css color token
+    public List<VmTag> VmTags { get; set; } = new();
+}
+
+/// <summary>Many-to-many join between VirtualMachine and Tag.</summary>
+public class VmTag
+{
+    public int VmId { get; set; }
+    public VirtualMachine Vm { get; set; } = null!;
+    public int TagId { get; set; }
+    public Tag Tag { get; set; } = null!;
 }
 
 public static class StorageTypes

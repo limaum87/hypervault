@@ -45,6 +45,15 @@ public record StorageStatsDto(long TotalBytes, long FreeBytes, long UsedBytes, s
 /// <summary>A single point in a VM's backup-health history (oldest -> newest).</summary>
 public record BackupHistoryEntryDto(string Status, DateTimeOffset? At);
 
+/// <summary>A tag attached to a VM (or in the catalog).</summary>
+public record TagDto(int Id, string Key, string Label, string Color);
+
+/// <summary>Body for creating a tag in the catalog.</summary>
+public record TagCreateDto(string Key, string Label, string? Color);
+
+/// <summary>Body for replacing a VM's tags. tagIds is the full desired set.</summary>
+public record VmTagsAssignDto(int[] TagIds);
+
 public record VmViewDto(
     int Id,
     int HostId,
@@ -58,7 +67,8 @@ public record VmViewDto(
     DateTimeOffset? LastSyncedAt,
     DateTimeOffset? LastBackupAt,
     string? LastBackupStatus,
-    IReadOnlyList<BackupHistoryEntryDto> BackupHistory);
+    IReadOnlyList<BackupHistoryEntryDto> BackupHistory,
+    IReadOnlyList<TagDto> Tags);
 
 // ---- Jobs ----
 public record JobCreateDto(
