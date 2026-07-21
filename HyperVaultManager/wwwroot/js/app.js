@@ -351,8 +351,8 @@ async function viewHosts() {
     </tr></thead><tbody>`;
   if (!hosts.length) html += emptyRow(7, "server", "hosts.empty");
   else html += hosts.map(h => `<tr>
-    <td><strong>${esc(h.name)}</strong><div class="cell-mono muted">${esc((h.useHttps ? "https" : "http") + "://" + h.ipOrFqdn + ":" + h.port)}</div></td>
-    <td class="cell-dim">${esc(h.notes || "—")}</td>
+    <td><strong>${esc(h.name)}</strong>${h.notes ? `<div class="cell-dim muted">${esc(h.notes)}</div>` : ""}</td>
+    <td class="cell-mono">${esc(h.ipOrFqdn || "—")}<div class="cell-dim muted">:${esc(h.port)} (${h.useHttps ? "https" : "http"})</div></td>
     <td>${statusBadge(h.status)}</td>
     <td class="cell-mono">${esc(h.agentVersion || "—")}</td>
     <td class="cell-mono">${h.vmCount}</td>
