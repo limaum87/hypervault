@@ -5,7 +5,7 @@
 Você DEVE se identificar com um nome de agente fixo.
 
 Defina internamente:
-Agent name: trunks
+Agent name: smoke
 
 Esse nome DEVE ser utilizado em todas as notificações.
 
@@ -97,8 +97,8 @@ A mensagem DEVE conter:
 ### Sucesso
 curl -H "Title: [OK] build-falcon" \
      -H "Priority: high" \
-     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/trunks.png" \
-     -H "User: trunks" \
+     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/smoke.png" \
+     -H "User: smoke" \
      -d "Tarefa: build-falcon. Build concluído com sucesso." \
      https://ntfy.sh/lemonagents
 
@@ -107,8 +107,8 @@ curl -H "Title: [OK] build-falcon" \
 ### Erro
 curl -H "Title: [ERRO] deploy-api" \
      -H "Priority: urgent" \
-     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/trunks.png" \     
-     -H "User: trunks" \     
+     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/smoke.png" \     
+     -H "User: smoke" \     
      -d "Tarefa: deploy-api. Falha durante migration do banco." \
      https://ntfy.sh/lemonagents
 
@@ -117,8 +117,8 @@ curl -H "Title: [ERRO] deploy-api" \
 ### Aguardando usuário
 curl -H "Title: [AGUARDANDO] parser-xls" \
      -H "Priority: urgent" \
-     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/trunks.png" \     
-     -H "User: trunks" \
+     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/smoke.png" \     
+     -H "User: smoke" \
      -d "Tarefa: parser-xls. Preciso da sua decisão sobre linhas inválidas." \
      https://ntfy.sh/lemonagents
 
