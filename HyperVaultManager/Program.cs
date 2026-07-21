@@ -243,7 +243,7 @@ static void EnsureTagsSchema(ManagerDbContext db, Microsoft.Extensions.Logging.I
 static void EnsureStorageCredentialsColumns(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
 {
     var existing = db.Database.SqlQueryRaw<string>(
-            "SELECT name FROM pragma_table_info('StorageTargets')")
+            "SELECT name FROM pragma_table_info('Storages')")
         .ToHashSet();
     var add = new (string Col, string Ddl)[]
     {
@@ -255,8 +255,8 @@ static void EnsureStorageCredentialsColumns(ManagerDbContext db, Microsoft.Exten
     {
         if (!existing.Contains(col))
         {
-            db.Database.ExecuteSqlRaw($"ALTER TABLE StorageTargets ADD COLUMN \"{col}\" {ddl};");
-            logger.LogInformation("Added column StorageTargets.{Col}", col);
+            db.Database.ExecuteSqlRaw($"ALTER TABLE Storages ADD COLUMN \"{col}\" {ddl};");
+            logger.LogInformation("Added column Storages.{Col}", col);
         }
     }
 }
