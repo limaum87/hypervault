@@ -122,7 +122,7 @@
       <Environment Id="EnvCertStorePath" Name="HyperVBackupAgent__Api__Certificate__StorePath" Value="C:\ProgramData\HyperVBackupAgent\certs\agent-api.pfx" Action="set" System="yes" Part="all" />
       <Environment Id="EnvJobsStorePath" Name="HyperVBackupAgent__Api__Jobs__StorePath" Value="C:\ProgramData\HyperVBackupAgent\jobs\api-jobs.json" Action="set" System="yes" Part="all" />
       <Environment Id="EnvLogDirectory" Name="HyperVBackupAgent__Api__Logging__Directory" Value="C:\ProgramData\HyperVBackupAgent\logs" Action="set" System="yes" Part="all" />
-      <Environment Id="EnvSchedulerEnabled" Name="HyperVBackupAgent__Scheduler__Enabled" Value="true" Action="set" System="yes" Part="all" />
+      <Environment Id="EnvSchedulerEnabled" Name="HyperVBackupAgent__Scheduler__Enabled" Value="false" Action="set" System="yes" Part="all" />
       <Environment Id="EnvSchedulerBackupRoot" Name="HyperVBackupAgent__Scheduler__BackupRoot" Value="[BACKUP_ROOT]" Action="set" System="yes" Part="all" />
     </Component>
     </ComponentGroup>

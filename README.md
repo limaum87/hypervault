@@ -300,17 +300,17 @@ Optional install property:
 msiexec /i .\HyperVBackupAgent.msi API_TOKEN="<token>" BACKUP_ROOT="D:\HyperVBackups"
 ```
 
-The MSI installs and starts both automatic services, creates `C:\ProgramData\HyperVBackupAgent` folders, configures the API for HTTPS on port `5443`, enables the scheduler, and sets production providers through machine environment variables. `API_TOKEN` is required because the central server must send the same bearer token when calling the local agent API.
+The MSI installs and starts both automatic services, creates `C:\ProgramData\HyperVBackupAgent` folders, configures the API for HTTPS on port `5443`, keeps the internal scheduler disabled by default, and sets production providers through machine environment variables. `API_TOKEN` is required because the central server must send the same bearer token when calling the local agent API.
 
 ## Scheduler
 
-The scheduler is enabled by default for automatic backups. Configure its schedule under:
+The internal scheduler is disabled by default so the Manager controls scheduled backups. Enable it explicitly only when the agent should schedule backups independently:
 
 ```json
 {
   "HyperVBackupAgent": {
     "Scheduler": {
-      "Enabled": true,
+      "Enabled": false,
       "BackupRoot": "D:\\HyperVBackups",
       "VmNames": [ "ERP01", "DC01" ],
       "PollInterval": "00:01:00",
@@ -325,7 +325,7 @@ The scheduler is enabled by default for automatic backups. Configure its schedul
 }
 ```
 
-If `VmNames` is empty, the service lists all VMs through the configured Hyper-V provider.
+When enabled, an empty `VmNames` list makes the service select all VMs through the configured Hyper-V provider. Set an explicit list before enabling it.
 
 ## Backup Format
 
