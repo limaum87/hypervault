@@ -124,6 +124,22 @@ public class AgentClient
         return body;
     }
 
+    /// <summary>Asks the agent to apply the retention policy over a backup root:
+    /// keeps the newest valid full chain plus (keepLastChains-1) newer chains and
+    /// deletes the rest. Synchronous on the agent (directory deletes), so it uses
+    /// the long-timeout client. Returns one result per chain.</summary>
+    public async Task<JsonArray?> ApplyRetentionAsync(HyperVHost host, string backupRoot, int keepLastChains, int? keepDays = null, bool dryRun = false, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["backupRoot"] = backupRoot,
+            ["keepLastChains"] = keepLastChains,
+            ["keepDays"] = keepDays,
+            ["dryRun"] = dryRun
+        };
+        return await PostJsonLongAsync<JsonArray>($"{BuildBaseUrl(host)}/maintenance/apply-retention", host, body, ct).ConfigureAwait(false);
+    }
+
     public async Task<AgentJob> EnqueueVerifyChainAsync(HyperVHost host, string chainPath, CancellationToken ct = default)
     {
         var body = new { chainPath };

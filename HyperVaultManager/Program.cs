@@ -129,6 +129,10 @@ using (var scope = app.Services.CreateScope())
 
     // Add new scheduling columns to the Jobs table if missing (existing DBs).
     EnsureJobsScheduleColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
+    // Add GFS rotation column (FullIntervalDays) to Jobs if missing (existing DBs).
+    EnsureJobsFullIntervalColumn(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
+    // Add retention column (KeepChains) to Jobs if missing (existing DBs).
+    EnsureJobsKeepChainsColumn(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
     // Add Mode + source VM columns to RestoreRuns if missing (existing DBs).
     EnsureRestoreColumns(db, app.Logger as Microsoft.Extensions.Logging.ILogger);
     // Add Tags catalog + VmTags join (existing DBs created before tags existed).
@@ -168,6 +172,35 @@ static void EnsureJobsScheduleColumns(ManagerDbContext db, Microsoft.Extensions.
             db.Database.ExecuteSqlRaw($"ALTER TABLE Jobs ADD COLUMN \"{col}\" {ddl};");
             logger.LogInformation("Added column Jobs.{Col}", col);
         }
+    }
+}
+
+// Adds the GFS rotation column (FullIntervalDays) to Jobs (existing DBs created
+// before periodic-full rotation existed). DEFAULT 0 keeps legacy jobs as pure
+// single-type (no rotation) — fully backward compatible.
+static void EnsureJobsFullIntervalColumn(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
+{
+    var existing = db.Database.SqlQueryRaw<string>(
+            "SELECT name FROM pragma_table_info('Jobs')")
+        .ToHashSet();
+    if (!existing.Contains("FullIntervalDays"))
+    {
+        db.Database.ExecuteSqlRaw("ALTER TABLE Jobs ADD COLUMN \"FullIntervalDays\" INTEGER NOT NULL DEFAULT 0;");
+        logger.LogInformation("Added column Jobs.FullIntervalDays");
+    }
+}
+
+// Adds the retention column (KeepChains) to Jobs (existing DBs created before
+// chain retention existed). DEFAULT 1 = keep only the newest full chain.
+static void EnsureJobsKeepChainsColumn(ManagerDbContext db, Microsoft.Extensions.Logging.ILogger logger)
+{
+    var existing = db.Database.SqlQueryRaw<string>(
+            "SELECT name FROM pragma_table_info('Jobs')")
+        .ToHashSet();
+    if (!existing.Contains("KeepChains"))
+    {
+        db.Database.ExecuteSqlRaw("ALTER TABLE Jobs ADD COLUMN \"KeepChains\" INTEGER NOT NULL DEFAULT 1;");
+        logger.LogInformation("Added column Jobs.KeepChains");
     }
 }
 
@@ -279,6 +312,16 @@ static void ApplySchedule(BackupJob job, JobCreateDto dto)
         ? CronNextRun.Next(job.CronSchedule, DateTimeOffset.UtcNow, tz)
         : null;
 }
+
+// FullIntervalDays only makes sense for incremental jobs (GFS rotation). For full
+// jobs it is forced to 0 (rotation is meaningless); otherwise clamp to >= 0.
+static int NormalizeFullInterval(string? type, int value) =>
+    string.Equals(type, JobTypes.Incremental, StringComparison.OrdinalIgnoreCase)
+        ? Math.Max(0, value)
+        : 0;
+
+// KeepChains must be >= 1 (the agent refuses to delete the last valid chain anyway).
+static int NormalizeKeepChains(int value) => Math.Max(1, value);
 
 // ---- error handling ----
 app.Use(async (ctx, next) =>
@@ -829,7 +872,9 @@ api.MapPost("/jobs", async (JobCreateDto dto, ManagerDbContext db) =>
         Name = dto.Name.Trim(),
         HostId = dto.HostId, VmId = dto.VmId, StorageId = dto.StorageId,
         Type = dto.Type == JobTypes.Incremental ? JobTypes.Incremental : JobTypes.Full,
-        RetentionDays = dto.RetentionDays, Enabled = dto.Enabled
+        RetentionDays = dto.RetentionDays, Enabled = dto.Enabled,
+        FullIntervalDays = NormalizeFullInterval(dto.Type, dto.FullIntervalDays),
+        KeepChains = NormalizeKeepChains(dto.KeepChains)
     };
     ApplySchedule(job, dto);
     db.Jobs.Add(job); await db.SaveChangesAsync();
@@ -846,6 +891,8 @@ api.MapPut("/jobs/{id:int}", async (int id, JobCreateDto dto, ManagerDbContext d
     job.Name = dto.Name.Trim(); job.HostId = dto.HostId; job.VmId = dto.VmId;
     job.StorageId = dto.StorageId; job.Type = dto.Type;
     job.RetentionDays = dto.RetentionDays; job.Enabled = dto.Enabled;
+    job.FullIntervalDays = NormalizeFullInterval(dto.Type, dto.FullIntervalDays);
+    job.KeepChains = NormalizeKeepChains(dto.KeepChains);
     ApplySchedule(job, dto);
     await db.SaveChangesAsync();
     return Results.Ok();
@@ -1180,7 +1227,7 @@ static class Map
         j.StorageId, j.Storage?.Name ?? "", j.Type,
         j.ScheduleType, j.ScheduleTime, j.ScheduleWeekdays, j.ScheduleDayOfMonth, j.TimeZone, j.CronSchedule,
         ScheduleLabel(j), NextRunLabel(j),
-        j.RetentionDays, j.Enabled, j.LastRunAt, j.NextRunAt, j.CreatedAt);
+        j.RetentionDays, j.Enabled, j.FullIntervalDays, j.KeepChains, j.LastRunAt, j.NextRunAt, j.CreatedAt);
 
     public static string ScheduleLabel(BackupJob j)
     {

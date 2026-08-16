@@ -142,7 +142,22 @@ public class BackupJob
     /// <summary>Derived 5-field cron expression (always in ScheduleType's TZ). Empty = manual only.</summary>
     public string CronSchedule { get; set; } = CronPresets.Disabled;
 
+    /// <summary>Retention window in days for this job's backups.</summary>
     public int RetentionDays { get; set; } = 7;
+
+    /// <summary>GFS-style rotation interval. When <see cref="Type"/> is incremental and
+    /// this is &gt; 0, the job runs incrementally on its normal schedule but takes a
+    /// FULL backup every N days (and also seeds the chain with a full when none
+    /// exists yet). Ignored when <see cref="Type"/> is full. 0 = pure incremental
+    /// (or pure full), i.e. the legacy single-type behavior.</summary>
+    public int FullIntervalDays { get; set; } = 0;
+
+    /// <summary>How many backup chains (full + its incrementals) to keep on the
+    /// storage after each successful run. 1 = keep only the newest full chain
+    /// (GFS minimal). Applied by the manager right after a successful backup;
+    /// <see cref="RetentionDays""/> additionally prunes chains older than N days.</summary>
+    public int KeepChains { get; set; } = 1;
+
     public bool Enabled { get; set; } = true;
     public DateTimeOffset? LastRunAt { get; set; }
     public DateTimeOffset? NextRunAt { get; set; }

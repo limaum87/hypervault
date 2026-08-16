@@ -871,17 +871,19 @@ async function viewJobs() {
       <th data-i18n="jobs.schedule">${t("jobs.schedule")}</th>
       <th data-i18n="jobs.next_run">${t("jobs.next_run")}</th>
       <th data-i18n="jobs.last_run">${t("jobs.last_run")}</th>
+      <th data-i18n="jobs.retention">${t("jobs.retention")}</th>
       <th data-i18n="common.enabled">${t("common.enabled")}</th>
       <th data-i18n="common.actions" class="t-actions">${t("common.actions")}</th>
     </tr></thead><tbody>`;
-  if (!jobs.length) html += emptyRow(8, "clock", "jobs.empty");
+  if (!jobs.length) html += emptyRow(9, "clock", "jobs.empty");
   else html += jobs.map(j => `<tr>
     <td><strong>${esc(j.name)}</strong><div class="cell-mono muted">${esc(j.vmName)} @ ${esc(j.hostName)}</div></td>
     <td class="cell-dim">${esc(j.storageName)}</td>
-    <td>${esc(t(`jobs.types.${j.type}`))}</td>
+    <td>${esc(t(`jobs.types.${j.type}`))}${j.fullIntervalDays > 0 ? `<div class="cell-mono muted">${esc(t("jobs.full_every"))} ${j.fullIntervalDays}d</div>` : ""}</td>
     <td><span class="schedule-chip">${esc(j.scheduleLabel || t("jobs.manual_only"))}</span>${j.scheduleType === "weekly" && j.scheduleWeekdays ? `<div class="cell-mono muted">${esc(weekdaysLabel(j.scheduleWeekdays))}</div>` : ""}</td>
     <td class="cell-mono">${(j.scheduleType === "manual" || !j.enabled) ? `<span class="muted">—</span>` : fmtInTz(j.nextRunAt, j.timeZone)}</td>
     <td class="cell-mono">${fmtRelative(j.lastRunAt)}</td>
+    <td class="cell-mono">${j.keepChains ?? 1} / ${j.retentionDays}d</td>
     <td>${j.enabled ? `<span class="badge online"><span class="dot"></span>on</span>` : `<span class="badge offline"><span class="dot"></span>off</span>`}</td>
     <td class="t-actions">
       <button class="btn sm icon-only primary" onclick="runJob(${j.id})" title="${esc(t("common.run_now"))}">${IC("zap", 14)}</button>
@@ -911,9 +913,10 @@ async function jobForm(id = null) {
       ${vms.map(v => `<option value="${v.id}" data-host="${v.hostId}" ${j.vmId === v.id ? "selected" : ""}>${esc(v.name)} (${esc(v.hostName)})</option>`).join("")}</select></div>
     <div class="field"><label data-i18n="jobs.storage">${t("jobs.storage")}</label><select name="storageId" required>
       ${storages.map(s => `<option value="${s.id}" ${j.storageId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>
-    <div class="field"><label data-i18n="jobs.type">${t("jobs.type")}</label><select name="type">
+    <div class="field"><label data-i18n="jobs.type">${t("jobs.type")}</label><select name="type" id="jfType" onchange="toggleRotationField()">
       <option value="full" ${j.type === "full" ? "selected" : ""}>${t("jobs.types.full")}</option>
       <option value="incremental" ${j.type === "incremental" ? "selected" : ""}>${t("jobs.types.incremental")}</option></select></div>
+    <div class="field" id="jfRotation"><label data-i18n="jobs.full_interval_days">${t("jobs.full_interval_days")}</label><input name="fullIntervalDays" type="number" min="0" step="1" value="${j.fullIntervalDays ?? 0}" /><span class="hint" style="margin-top:6px" data-i18n="jobs.full_interval_hint">${t("jobs.full_interval_hint")}</span></div>
     <div class="field full divider"></div>
     <div class="field full"><label data-i18n="jobs.schedule">${t("jobs.schedule")}</label><select name="scheduleType" id="jfScheduleType" onchange="toggleScheduleFields()">
       <option value="manual" ${st === "manual" ? "selected" : ""}>${t("jobs.schedule.manual")}</option>
@@ -933,7 +936,8 @@ async function jobForm(id = null) {
     <div class="field jfSched jfMonthly"><label data-i18n="jobs.schedule.day_of_month">${t("jobs.schedule.day_of_month")}</label><select name="scheduleDayOfMonth" onchange="updateNextPreview()">${dayOpts}</select></div>
 
     <div class="field full divider"></div>
-    <div class="field"><label data-i18n="jobs.retention_days">${t("jobs.retention_days")}</label><input name="retentionDays" type="number" min="1" value="${j.retentionDays ?? 7}" /></div>
+    <div class="field"><label data-i18n="jobs.retention_days">${t("jobs.retention_days")}</label><input name="retentionDays" type="number" min="1" value="${j.retentionDays ?? 7}" /><span class="hint" style="margin-top:6px" data-i18n="jobs.retention_hint">${t("jobs.retention_hint")}</span></div>
+    <div class="field"><label data-i18n="jobs.keep_chains">${t("jobs.keep_chains")}</label><input name="keepChains" type="number" min="1" step="1" value="${j.keepChains ?? 1}" /><span class="hint" style="margin-top:6px" data-i18n="jobs.keep_chains_hint">${t("jobs.keep_chains_hint")}</span></div>
     <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="enabled" ${j.enabled !== false ? "checked" : ""}/> <span data-i18n="jobs.enabled">${t("jobs.enabled")}</span></label></div>
   </form>`;
   const foot = `<button class="btn ghost" data-close data-i18n="common.cancel">${t("common.cancel")}</button>
@@ -941,6 +945,7 @@ async function jobForm(id = null) {
   openModal("jobs.add", body, foot);
   filterVmOptions();
   toggleScheduleFields();
+  toggleRotationField();
   updateNextPreview();
 }
 
@@ -951,6 +956,13 @@ function toggleScheduleFields() {
   $$(".jfTime, .jfTz").forEach(el => el.style.display = "");
   if (st === "weekly") $(".jfWeekly").style.display = "";
   if (st === "monthly") $(".jfMonthly").style.display = "";
+}
+
+// Show the GFS rotation field only for incremental jobs (full jobs ignore it).
+function toggleRotationField() {
+  const el = $("#jfRotation");
+  if (!el) return;
+  el.style.display = $("#jfType")?.value === "incremental" ? "" : "none";
 }
 
 function selectedWeekdays() { return $$("#jfWeekdays input:checked").map(c => Number(c.value)); }
@@ -1041,6 +1053,8 @@ async function saveJob(id) {
     scheduleDayOfMonth: scheduleType === "monthly" ? Number(fd.get("scheduleDayOfMonth")) : null,
     timeZone: fd.get("timeZone") || "UTC",
     retentionDays: Number(fd.get("retentionDays")),
+    keepChains: Math.max(1, Number(fd.get("keepChains") || 1)),
+    fullIntervalDays: Number(fd.get("fullIntervalDays") || 0),
     enabled: f.enabled.checked
   };
   try {

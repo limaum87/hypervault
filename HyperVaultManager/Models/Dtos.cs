@@ -90,7 +90,9 @@ public record JobCreateDto(
     int? ScheduleDayOfMonth, // 1..31, for monthly
     string TimeZone,       // IANA id, e.g. "America/Sao_Paulo"
     int RetentionDays,
-    bool Enabled);
+    bool Enabled,
+    int FullIntervalDays = 0, // GFS: full every N days when Type=incremental (0 = off)
+    int KeepChains = 1); // retention: chains (fulls) to keep (1 = only newest)
 
 public record JobViewDto(
     int Id,
@@ -112,6 +114,8 @@ public record JobViewDto(
     string NextRunLabel,
     int RetentionDays,
     bool Enabled,
+    int FullIntervalDays,
+    int KeepChains,
     DateTimeOffset? LastRunAt,
     DateTimeOffset? NextRunAt,
     DateTimeOffset CreatedAt);

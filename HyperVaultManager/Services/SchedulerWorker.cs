@@ -78,13 +78,16 @@ public static class SchedulerFire
     public static async Task<BackupRun> FireJobAsync(ManagerDbContext db, IJobQueue queue, BackupJob job, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
+        // Resolve the effective type (GFS rotation): an incremental job with
+        // FullIntervalDays > 0 takes a full periodically / to seed the chain.
+        var effectiveType = await BackupTypeResolver.ResolveAsync(db, job, now, ct);
         var run = new BackupRun
         {
             JobId = job.Id,
             HostId = job.HostId,
             VmId = job.VmId,
             StorageId = job.StorageId,
-            Type = job.Type,
+            Type = effectiveType,
             Status = RunStatuses.Queued,
             QueuedAt = now
         };

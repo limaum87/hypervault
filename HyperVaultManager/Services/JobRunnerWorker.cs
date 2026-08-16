@@ -109,12 +109,58 @@ public class JobRunnerWorker : BackgroundService
             // 3) Poll
             var final = await PollAsync(db, run, _backupTimeout, stop);
             ApplyJobResult(run, final);
+
+            // 4) Retention (best effort): after a successful backup, prune old
+            // chains so only the newest full chain (+ its incrementals) remains.
+            // Never fails the run — a retention problem must not turn a good
+            // backup red; it is logged and retried on the next successful run.
+            if (run.Status == RunStatuses.Succeeded)
+                await ApplyRetentionBestEffortAsync(db, run, stop);
         }
         catch (Exception ex)
         {
             Fail(run, ex);
         }
         finally { await Finish(db, run, stop); }
+    }
+
+    /// <summary>Applies the job's chain-retention policy through the agent: keeps the
+    /// newest <see cref="BackupJob.KeepChains"/> chain(s) (default 1 = newest full only)
+    /// and prunes chains older than <see cref="BackupJob.RetentionDays"/> when set.
+    /// SMB-backed storages are skipped for now: the agent's retention endpoint has
+    /// no per-call credentials, so it can only prune roots it can reach locally.</summary>
+    private async Task ApplyRetentionBestEffortAsync(ManagerDbContext db, BackupRun run, CancellationToken stop)
+    {
+        if (run.Host is null || run.Storage is null) return;
+        if (run.Storage.Type == StorageTypes.Smb)
+        {
+            _logger.LogWarning("Retention skipped for run {Id}: SMB storage '{Storage}' is not supported yet", run.Id, run.Storage.Name);
+            return;
+        }
+
+        try
+        {
+            // Job settings drive retention; manual runs (no job) fall back to keep-1.
+            var job = run.JobId is int jobId
+                ? await db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId, stop)
+                : null;
+            var keepChains = Math.Max(1, job?.KeepChains ?? 1);
+            int? keepDays = job is { RetentionDays: > 0 } ? job.RetentionDays : null;
+
+            var results = await _agent.ApplyRetentionAsync(run.Host, run.Storage.Path, keepChains, keepDays, dryRun: false, ct: stop);
+            var deleted = results?.Where(r => r?["deleted"]?.GetValue<bool>() == true).ToList() ?? [];
+            _logger.LogInformation("Retention after run {Id} (keep {Keep} chains, {Days}d): deleted {Deleted}/{Total} chain(s)",
+                run.Id, keepChains, keepDays?.ToString() ?? "-", deleted.Count, results?.Count ?? 0);
+            if (deleted.Count > 0)
+            {
+                var names = string.Join(", ", deleted.Select(r => r?["chainId"]?.ToString()));
+                run.Message = $"{run.Message} | retention: deleted {deleted.Count} old chain(s): {names}".TrimStart(' ', '|');
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Retention failed after run {Id} (backup itself succeeded)", run.Id);
+        }
     }
 
     private async Task RunVerifyAsync(ManagerDbContext db, int runId, CancellationToken stop)
