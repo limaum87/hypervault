@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HyperVaultManager.Data;
 using HyperVaultManager.Dtos;
 using HyperVaultManager.Models;
@@ -661,13 +662,61 @@ api.MapPost("/hosts/{id:int}/sync-vms", async (int id, AgentClient agent, Manage
     return Results.Ok(result.Select(v => Map.Vm(v, host.Name)));
 });
 
-api.MapGet("/hosts/{id:int}/vms/{vmId:int}/restore-points", async (int id, int vmId, AgentClient agent, ManagerDbContext db) =>
+// Restore points are listed per configured storage: manager backups land under
+// storage paths (e.g. e:\Vault), not under the agent's own BackupRoot, so the
+// un-rooted agent call alone would report "no restore points". Each storage is
+// scanned through the host agent (SMB shares mount with their stored creds) and
+// the results are merged. With no storages configured we keep the plain agent
+// call (its configured BackupRoot) so standalone setups still work.
+api.MapGet("/hosts/{id:int}/vms/{vmId:int}/restore-points", async (
+    int id, int vmId, AgentClient agent, ManagerDbContext db, SecretProtector secrets,
+    Microsoft.Extensions.Logging.ILogger<Program> logger, CancellationToken ct) =>
 {
-    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id)
+    var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == id, ct)
         ?? throw new InvalidOperationException($"Host {id} not found");
-    var vm = await db.VirtualMachines.FirstOrDefaultAsync(v => v.Id == vmId && v.HostId == id)
+    var vm = await db.VirtualMachines.FirstOrDefaultAsync(v => v.Id == vmId && v.HostId == id, ct)
         ?? throw new InvalidOperationException($"VM {vmId} not found");
-    return Results.Ok(await agent.GetRestorePointsAsync(host, vm.ExternalId));
+
+    var storages = await db.Storages.OrderBy(s => s.Id).ToListAsync(ct);
+    if (storages.Count == 0)
+        return Results.Ok(await agent.GetRestorePointsAsync(host, vm.ExternalId, ct: ct));
+
+    var merged = new List<JsonObject>();
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var failures = new List<string>();
+    foreach (var storage in storages)
+    {
+        var smb = storage.Type == StorageTypes.Smb
+            ? SmbCredentials.From(storage.SmbUsername, secrets.Unprotect(storage.SmbPasswordCipher), storage.SmbDomain)
+            : null;
+        try
+        {
+            var points = await agent.GetRestorePointsAsync(host, vm.ExternalId, storage.Path, smb, ct);
+            if (points is null) continue;
+            foreach (var node in points.OfType<JsonObject>())
+            {
+                // Nested storages would return the same point twice; dedupe by
+                // chain location + backup id.
+                var key = $"{node["chainPath"]}|{node["backupId"]}";
+                if (seen.Add(key)) merged.Add(node);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Restore-point scan failed for storage {Storage} ({Path}) on host {Host}",
+                storage.Name, storage.Path, host.Name);
+            failures.Add($"{storage.Name}: {ex.Message}");
+        }
+    }
+
+    // A VM with no points is a legitimate answer, but only when every scan
+    // actually ran. If all storages failed, surface the error instead of a
+    // misleading empty list.
+    if (merged.Count == 0 && failures.Count == storages.Count)
+        throw new InvalidOperationException($"Could not scan any storage for restore points ({string.Join("; ", failures)})");
+
+    var ordered = merged.OrderBy(p => p["createdAt"]?.GetValue<string>()).ToList();
+    return Results.Ok(ordered);
 });
 
 // ---------- STORAGES ----------

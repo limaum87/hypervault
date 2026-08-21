@@ -281,16 +281,32 @@ app.MapGet("/vms/{id}", async (string id, IHyperVService hyperV, CancellationTok
 });
 app.MapGet("/vms/{id}/restore-points", async (
     string id,
+    string? root,
     string? status,
     DateTimeOffset? from,
     DateTimeOffset? to,
+    ApiPathValidator paths,
     IRestorePointCatalog catalog,
     CancellationToken ct) =>
 {
     BackupStatus? parsedStatus = string.IsNullOrWhiteSpace(status)
         ? null
         : Enum.Parse<BackupStatus>(status, ignoreCase: true);
-    return Results.Ok(await catalog.ListRestorePointsAsync(id, parsedStatus, from, to, ct));
+    var scanRoot = root is null ? null : paths.ValidateAbsolutePath(root, nameof(root));
+    return Results.Ok(await catalog.ListRestorePointsAsync(id, parsedStatus, from, to, scanRoot, ct));
+});
+// POST variant for callers that must pass SMB credentials alongside the root
+// (credentials never belong in a query string). Mounts the share for the scan.
+app.MapPost("/vms/{id}/restore-points", async (
+    string id,
+    [FromBody] RestorePointQueryRequest request,
+    ApiPathValidator paths,
+    IRestorePointCatalog catalog,
+    CancellationToken ct) =>
+{
+    var scanRoot = paths.ValidateAbsolutePath(request.Root, nameof(request.Root));
+    await using var smb = SmbShareMount.Mount(scanRoot, request.SmbCredentials);
+    return Results.Ok(await catalog.ListRestorePointsAsync(id, null, null, null, scanRoot, ct));
 });
 app.MapPost("/backups/full", async ([FromBody] BackupRequest request, IBackupEngine engine, ApiPathValidator paths, CancellationToken ct) =>
 {

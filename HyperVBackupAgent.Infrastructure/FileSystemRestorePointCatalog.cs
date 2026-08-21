@@ -18,15 +18,17 @@ public sealed class FileSystemRestorePointCatalog : IRestorePointCatalog
         BackupStatus? status = null,
         DateTimeOffset? from = null,
         DateTimeOffset? to = null,
+        string? root = null,
         CancellationToken cancellationToken = default)
     {
-        if (!Directory.Exists(_backupRoot))
+        var scanRoot = Path.GetFullPath(root ?? _backupRoot);
+        if (!Directory.Exists(scanRoot))
         {
             return [];
         }
 
         var summaries = new List<RestorePointSummary>();
-        foreach (var chainFile in Directory.EnumerateFiles(_backupRoot, "chain.json", SearchOption.AllDirectories))
+        foreach (var chainFile in Directory.EnumerateFiles(scanRoot, "chain.json", SearchOption.AllDirectories))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var chainDirectory = Path.GetDirectoryName(chainFile)!;

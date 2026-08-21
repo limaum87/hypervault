@@ -88,6 +88,18 @@ public sealed record RestoreRequest(
     string? TargetBackupId = null,
     bool CreateVm = true);
 
+/// <summary>Restore-point lookup rooted at an explicit backup root (e.g. a manager
+/// storage path) instead of the agent's configured BackupRoot. SMB credentials
+/// mount the share before scanning UNC roots.</summary>
+public sealed record RestorePointQueryRequest(
+    string Root,
+    string? SmbUsername = null,
+    string? SmbPassword = null,
+    string? SmbDomain = null)
+{
+    public SmbCredentials? SmbCredentials => SmbCredentials.From(SmbUsername, SmbPassword, SmbDomain);
+}
+
 public sealed record FileLevelRestoreRequest(
     string RestorePoint,
     string? TargetBackupId = null,

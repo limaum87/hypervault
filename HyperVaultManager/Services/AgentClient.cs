@@ -41,8 +41,26 @@ public class AgentClient
     public async Task<JsonObject?> GetAgentInfoAsync(HyperVHost host, CancellationToken ct = default)
         => await GetJsonAsync<JsonObject>($"{BuildBaseUrl(host)}/agent", host, CreateClient(), ct).ConfigureAwait(false);
 
-    public async Task<JsonArray?> GetRestorePointsAsync(HyperVHost host, string vmExternalId, CancellationToken ct = default)
-        => await GetJsonAsync<JsonArray>($"{BuildBaseUrl(host)}/vms/{Uri.EscapeDataString(vmExternalId)}/restore-points", host, CreateClient(), ct).ConfigureAwait(false);
+    /// <summary>Lists restore points for a VM. Without <paramref name="root"/> the agent
+    /// scans its configured BackupRoot; with it, the given storage path (used by the
+    /// restore screen, whose backups live under manager storages). SMB credentials
+    /// switch the call to POST so they never land in a query string. Rooted scans
+    /// use the long client: recursive enumeration over a share can exceed 20s.</summary>
+    public async Task<JsonArray?> GetRestorePointsAsync(HyperVHost host, string vmExternalId, string? root = null, SmbCredentials? smb = null, CancellationToken ct = default)
+    {
+        var url = $"{BuildBaseUrl(host)}/vms/{Uri.EscapeDataString(vmExternalId)}/restore-points";
+        if (smb is { HasCredentials: true })
+        {
+            var body = new Dictionary<string, object?> { ["root"] = root ?? string.Empty };
+            if (!string.IsNullOrWhiteSpace(smb.Username)) body["smbUsername"] = smb.Username;
+            if (!string.IsNullOrWhiteSpace(smb.Password)) body["smbPassword"] = smb.Password;
+            if (!string.IsNullOrWhiteSpace(smb.Domain)) body["smbDomain"] = smb.Domain;
+            return await PostJsonLongAsync<JsonArray>(url, host, body, ct).ConfigureAwait(false);
+        }
+        if (!string.IsNullOrEmpty(root))
+            url += $"?root={Uri.EscapeDataString(root)}";
+        return await GetJsonLongAsync<JsonArray>(url, host, ct).ConfigureAwait(false);
+    }
 
     /// <summary>Total/free/used bytes for the volume that hosts a storage path, as reported by the agent.</summary>
     public async Task<JsonObject?> GetStorageStatsAsync(HyperVHost host, string path, SmbCredentials? smb = null, CancellationToken ct = default)

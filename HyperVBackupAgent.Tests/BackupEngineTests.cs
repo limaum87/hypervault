@@ -237,6 +237,40 @@ public sealed class BackupEngineTests
     }
 
     [Fact]
+    public async Task RestorePointCatalogScansCallerSuppliedRoot()
+    {
+        // Mirrors the manager flow: backups land under a storage path that differs
+        // from the agent's configured BackupRoot, and the catalog must find them
+        // when the caller passes the storage path as the scan root.
+        var root = CreateTempDirectory();
+        var vmRoot = Path.Combine(root, "vms", "ERP01");
+        Directory.CreateDirectory(vmRoot);
+        await File.WriteAllTextAsync(Path.Combine(vmRoot, "disk-0.bin"), "full-backup-content");
+
+        var storagePath = Path.Combine(root, "vault"); // where the backup actually goes
+        using var services = BuildServices(Path.Combine(root, "vms"), Path.Combine(root, "agent-own-backups"));
+
+        await services.GetRequiredService<IBackupEngine>()
+            .RunFullBackupAsync(new BackupRequest("ERP01", storagePath));
+
+        // Default call scans the agent's own (empty) root...
+        Assert.Empty(await services.GetRequiredService<IRestorePointCatalog>()
+            .ListRestorePointsAsync("ERP01"));
+
+        // ...while the rooted call finds the chain under the storage path.
+        var restorePoints = await services.GetRequiredService<IRestorePointCatalog>()
+            .ListRestorePointsAsync("ERP01", root: storagePath);
+
+        var restorePoint = Assert.Single(restorePoints);
+        Assert.Equal("ERP01", restorePoint.VmName);
+        Assert.StartsWith(storagePath, restorePoint.ChainPath, StringComparison.OrdinalIgnoreCase);
+
+        // A root that does not exist is an empty answer, not an error.
+        Assert.Empty(await services.GetRequiredService<IRestorePointCatalog>()
+            .ListRestorePointsAsync("ERP01", root: Path.Combine(root, "missing")));
+    }
+
+    [Fact]
     public async Task RetentionDeletesOldChainsButKeepsNewestValidFull()
     {
         var root = CreateTempDirectory();

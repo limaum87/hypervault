@@ -54,11 +54,15 @@ public interface IMetadataRepository
 
 public interface IRestorePointCatalog
 {
+    /// <summary>Lists restore points for a VM. When <paramref name="root"/> is null the
+    /// configured backup root is scanned; otherwise the caller-supplied root (e.g. a
+    /// manager storage path) is scanned instead.</summary>
     Task<IReadOnlyList<RestorePointSummary>> ListRestorePointsAsync(
         string vmIdOrName,
         BackupStatus? status = null,
         DateTimeOffset? from = null,
         DateTimeOffset? to = null,
+        string? root = null,
         CancellationToken cancellationToken = default);
 }
 
