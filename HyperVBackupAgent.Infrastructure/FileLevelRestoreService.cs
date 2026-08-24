@@ -188,15 +188,28 @@ public sealed class FileLevelRestoreService : IFileLevelRestoreService
             $ErrorActionPreference = 'Stop'
             $paths = @({{paths}})
             $result = foreach ($path in $paths) {
-              $disk = Mount-VHD -Path $path -ReadOnly -Passthru
-              Get-Partition -DiskNumber $disk.DiskNumber | ForEach-Object {
+              Mount-VHD -Path $path -ReadOnly -Passthru | Out-Null
+              # Resolve the mounted image back to a host disk. Mount-VHD -Passthru's
+              # DiskNumber is not always populated, so ask the Storage stack instead
+              # (Get-DiskImage / Get-Disk.Location both work for a mounted VHDX).
+              $disk = Get-DiskImage -ImagePath $path -ErrorAction SilentlyContinue | Get-Disk | Select-Object -First 1
+              if (-not $disk) { $disk = Get-Disk -ErrorAction SilentlyContinue | Where-Object { $_.Location -eq $path } | Select-Object -First 1 }
+              if (-not $disk) { throw "Mounted VHDX '$path' could not be resolved to a host disk." }
+              # Mount-VHD attaches the disk OFFLINE (and read-only). Bring it online
+              # so its volumes become visible/enumerable without a drive letter.
+              Set-Disk -Number $disk.Number -IsOffline $false | Out-Null
+              Get-Partition -DiskNumber $disk.Number | ForEach-Object {
                 $partition = $_
                 $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
-                if ($volume -and $volume.DriveLetter) {
+                if ($volume) {
+                  # Prefer the assigned drive letter, but fall back to the volume's
+                  # device path, which needs no drive letter and works even when
+                  # automount is disabled on the Hyper-V host.
+                  $mountPath = if ($volume.DriveLetter) { "$($volume.DriveLetter):\" } else { $volume.Path }
                   [pscustomobject]@{
                     DiskPath = $path
                     PartitionNumber = $partition.PartitionNumber
-                    MountPath = "$($volume.DriveLetter):\\"
+                    MountPath = $mountPath
                     Label = $volume.FileSystemLabel
                     FileSystem = $volume.FileSystem
                     SizeBytes = [int64]$partition.Size
@@ -217,7 +230,7 @@ public sealed class FileLevelRestoreService : IFileLevelRestoreService
             .Where(volume => !string.IsNullOrWhiteSpace(volume.MountPath))
             .Select(volume => new FileLevelRestoreVolume(
                 $"{Path.GetFileNameWithoutExtension(volume.DiskPath)}-p{volume.PartitionNumber}",
-                Path.GetFullPath(volume.MountPath), volume.Label, volume.FileSystem, volume.SizeBytes))
+                NormalizeVolumeRoot(volume.MountPath), volume.Label, volume.FileSystem, volume.SizeBytes))
             .DistinctBy(volume => volume.VolumeId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -240,7 +253,7 @@ public sealed class FileLevelRestoreService : IFileLevelRestoreService
             throw new ArgumentException("Path must be relative to the selected restore volume and cannot contain parent traversal.");
         }
 
-        var root = Path.GetFullPath(volume.MountPath);
+        var root = volume.MountPath; // already normalized (trailing separator) at discovery time
         var path = Path.GetFullPath(Path.Combine(root, candidate));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (!path.StartsWith(root, comparison))
@@ -275,6 +288,18 @@ public sealed class FileLevelRestoreService : IFileLevelRestoreService
     {
         var trimmed = json.Trim();
         return string.IsNullOrEmpty(trimmed) ? "[]" : trimmed.StartsWith('[') ? trimmed : $"[{trimmed}]";
+    }
+
+    // Normalizes a discovered mount path to a root that ends with a directory
+    // separator. Drive-letter roots and volume device paths (the fallback used
+    // when the host does not assign a letter) both flow through GetFullPath,
+    // which preserves the device-path prefix and only collapses separators.
+    private static string NormalizeVolumeRoot(string mountPath)
+    {
+        var full = Path.GetFullPath(mountPath);
+        if (full.EndsWith(Path.DirectorySeparatorChar) || full.EndsWith(Path.AltDirectorySeparatorChar))
+            return full;
+        return full + Path.DirectorySeparatorChar;
     }
 
     private static FileLevelRestoreSession ToPublic(SessionState state) => new(state.SessionId, state.CreatedAt, state.ExpiresAt, state.Volumes);

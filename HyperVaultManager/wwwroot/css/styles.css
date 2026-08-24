@@ -325,6 +325,24 @@ textarea { resize: vertical; min-height: 70px; padding: 9px 11px; height: auto; 
 
 /* ============================================================ MISC */
 .loader { display: flex; align-items: center; gap: 12px; color: var(--text-dim); padding: 60px; justify-content: center; }
+.spinner.sm { width: 13px; height: 13px; }
+
+/* ---------- FLR background-mount status pill ---------- */
+#flrPillRoot { position: fixed; right: 18px; bottom: 18px; z-index: 900; }
+.flr-pill { position: relative; display: flex; align-items: center; gap: 9px; padding: 8px 8px 8px 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--text); font-size: 12.5px; cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,.28); user-select: none; max-width: 320px; }
+.flr-pill:hover { border-color: var(--accent); }
+.flr-pill.ready:hover { border-color: var(--ok); }
+.flr-pill-label { white-space: nowrap; }
+.flr-pill-elapsed { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flr-pill-x { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; border-radius: 50%; background: transparent; color: var(--text-mute); cursor: pointer; flex: 0 0 auto; }
+.flr-pill-x:hover { background: var(--bg-soft); color: var(--text); }
+.flr-pill-tip { display: none; position: absolute; right: 0; bottom: calc(100% + 10px); width: 290px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 11.5px; line-height: 1.5; color: var(--text-dim); cursor: default; }
+.flr-pill:hover .flr-pill-tip { display: block; }
+.flr-mounting { flex-direction: column; gap: 12px; }
+.flr-mounting .flr-mount-row { display: flex; align-items: center; gap: 12px; }
+.flr-mounting .flr-mount-note { text-align: center; }
+.flr-elapsed { font-family: var(--mono); font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.flr-mount-hint { max-width: 440px; font-size: 12px; color: var(--text-mute); line-height: 1.45; margin-top: 6px; }
 .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .empty { text-align: center; padding: 56px 20px; color: var(--text-mute); }

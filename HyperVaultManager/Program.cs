@@ -348,6 +348,14 @@ app.Use(async (ctx, next) =>
     {
         await WriteErrorAsync(ctx, StatusCodes.Status409Conflict, "conflict", ex.Message);
     }
+    catch (OperationCanceledException) when (ctx.RequestAborted.IsCancellationRequested)
+    {
+        // Browser disconnected mid-request (e.g. closed the FLR modal / navigated
+        // away while the agent was still mounting). Nothing useful to send back;
+        // log it quietly instead of a scary unhandled-error stacktrace.
+        app.Logger.LogWarning("Client disconnected during {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+        ctx.Response.StatusCode = 499; // nginx-style "client closed request"; discarded if the socket is gone
+    }
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "Unhandled error {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
@@ -1115,8 +1123,22 @@ api.MapPost("/hosts/{id:int}/flr/sessions", async (int id, FlrSessionCreateDto d
         ?? throw new InvalidOperationException($"Host {id} not found");
     if (string.IsNullOrWhiteSpace(dto.RestorePointPath))
         throw new ArgumentException("RestorePointPath is required.");
-    var session = await agent.CreateFlrSessionAsync(host, dto.RestorePointPath, dto.TargetBackupId, dto.TtlMinutes, ct)
+
+    // Materializing the chain + mounting the VHDX read-only on the agent can take
+    // minutes for real chains. That work must NOT be tied to the browser
+    // connection: aborting mid-flight leaves the agent's in-flight copy running
+    // anyway (File.Copy is not cancellable) and risks orphaned temp files/mounts.
+    // So we call the agent with CancellationToken.None; if the client is gone by
+    // the time the session comes back, we close it right away (TTL is the backstop).
+    var session = await agent.CreateFlrSessionAsync(host, dto.RestorePointPath, dto.TargetBackupId, dto.TtlMinutes, CancellationToken.None)
         ?? throw new InvalidOperationException("Agent did not return a file-level restore session.");
+    if (ct.IsCancellationRequested)
+    {
+        var orphanId = (session as JsonObject)?["sessionId"]?.ToString();
+        if (!string.IsNullOrWhiteSpace(orphanId))
+            _ = agent.CloseFlrSessionAsync(host, orphanId, CancellationToken.None); // best-effort; agent TTL cleans up anyway
+        ct.ThrowIfCancellationRequested();
+    }
     return Results.Ok(session);
 });
 

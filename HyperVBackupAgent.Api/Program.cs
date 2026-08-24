@@ -73,6 +73,14 @@ app.Use(async (context, next) =>
     {
         await WriteLoggedErrorAsync(app.Logger, context, StatusCodes.Status409Conflict, "conflict", ex.Message, ex);
     }
+    catch (InvalidOperationException ex)
+    {
+        // Operational failures (e.g. a File-Level Restore mount that could not
+        // complete) should surface their real message instead of a generic 500,
+        // so the operator can see the underlying PowerShell/IO error.
+        app.Logger.LogError(ex, "Operation failed while processing {Method} {Path}", context.Request.Method, context.Request.Path);
+        await WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "operation_failed", ex.Message);
+    }
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "Unhandled API error while processing {Method} {Path}", context.Request.Method, context.Request.Path);
