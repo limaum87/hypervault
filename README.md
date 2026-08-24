@@ -1,8 +1,104 @@
-# HyperVBackupAgent
+# HyperVault — Hyper-V Backup Agent & Manager
 
-HyperVBackupAgent is a lightweight Windows agent for Hyper-V hosts. It is intended for small environments that need scheduled VM backups, incremental backup support through Hyper-V Resilient Change Tracking (RCT), backup-chain verification, and simple restore workflows without a central Windows backup server.
+**HyperVault** is a lightweight, open backup solution for Microsoft Hyper-V. It lets you schedule full and incremental VM backups, verify them, and restore entire VMs or individual files — without a central Windows backup server or per-VM licensing.
 
-The project targets .NET 8 and is designed to run without a graphical interface. It includes a CLI for local operations, an HTTPS API for future orchestration, and a Windows Service host for scheduled execution.
+It consists of two parts that work together:
+
+| Component | What it is | Where it runs |
+|---|---|---|
+| **HyperVBackupAgent** | Windows agent installed on each Hyper-V host. Performs backups, verification, and restore locally. | Windows Server 2016+ with Hyper-V |
+| **HyperVault Manager** | Web console that centralizes all agents: dashboard, scheduled jobs, restore, users. Bilingual (EN/PT-BR). | Any Docker host (Linux) |
+
+```
+                ┌─────────────────────────┐
+   Browser ───► │  HyperVault Manager     │  (Docker, SQLite)
+   (EN / PT-BR) │  dashboard • jobs •     │
+                │  restore • users        │
+                └───────────┬─────────────┘
+                            │ HTTPS + Bearer token
+                            ▼
+   ┌──────────────────────────────────────┐
+   │  HyperVBackupAgent (one per host)    │
+   │  full/RCT incremental • verify •     │
+   │  restore • file-level restore        │
+   └───────────┬──────────────────────────┘
+               ▼
+        Hyper-V (PowerShell / native RCT)
+```
+
+The Manager **never touches Hyper-V directly** — every operation goes through the agent's authenticated HTTPS API. If you only want backups on a single host, you can run the agent alone and drive it via its CLI or API.
+
+![Manager dashboard](docs/screenshots/dashboard.png)
+
+<details>
+<summary><strong>More screenshots</strong></summary>
+
+| Machines | Backup Jobs | Settings |
+|---|---|---|
+| ![Machines](docs/screenshots/vms.png) | ![Backup Jobs](docs/screenshots/jobs.png) | ![Settings](docs/screenshots/settings.png) |
+
+</details>
+
+## Why HyperVault?
+
+- **Incremental backups with RCT** — uses Hyper-V Resilient Change Tracking, so incrementals only copy changed blocks.
+- **Backup verification** — chain checks (hashes, ordering) and restore verification that reconstructs disks and validates VHDX mounts.
+- **Whole-VM and file-level restore** — restore a VM to any restore point, or mount a backup and download a single file from a Windows guest.
+- **Central console** — one dashboard for all hosts, with scheduled (cron) or manual jobs, history, retention, and per-VM settings.
+- **No infrastructure tax** — the agent is a small .NET 8 service; the Manager is a single Docker container with SQLite. No SQL Server required.
+- **Open format** — backups are stored as VHDX fulls plus raw block increments, described by JSON chain metadata.
+
+## Quick Start
+
+### 1. Manager (web console) — Docker
+
+```bash
+cd HyperVaultManager
+docker compose up -d --build
+```
+
+Open **http://localhost:8096** and log in with the seeded account:
+
+| Username | Password | Role |
+|----------|----------|------|
+| `admin`  | `admin`  | admin |
+
+> ⚠️ **Change the default password immediately** (Settings → My account).
+
+The SQLite database persists in the `manager-data` Docker volume. See [`HyperVaultManager/README.md`](HyperVaultManager/README.md) for details.
+
+### 2. Agent (Hyper-V host) — MSI (recommended)
+
+Build the MSI on a Windows machine with the .NET 8 SDK and WiX toolset:
+
+```powershell
+.\scripts\build-msi.ps1 -ProductVersion 1.0.0
+```
+
+Then install on each Hyper-V host from an elevated PowerShell:
+
+```powershell
+msiexec /i .\HyperVBackupAgent.msi API_TOKEN="<token-known-by-central-server>" BACKUP_ROOT="D:\HyperVBackups"
+```
+
+The MSI installs and starts two automatic Windows services:
+
+- **HyperVBackupAgent.Api** — local HTTPS API (port 5443) the Manager calls.
+- **HyperVBackupAgent.Scheduler** — optional standalone scheduler (disabled by default; the Manager controls scheduling).
+
+### 3. Connect them
+
+In the Manager: **Hosts → Add host** with the host name/IP, port, and the same `API_TOKEN`. Then **Test connection**, **Sync VMs**, and you are ready to create jobs.
+
+> First-time setup on an existing environment: each agent generates a self-signed certificate on startup. During enrollment, register its SHA-256 fingerprint (endpoint `GET /agent/certificate`) in the Manager host entry so the HTTPS connection can be trusted.
+
+## What you can do from there
+
+- **Dashboard** — hosts online/offline, VMs without backup, last-24h activity, storage usage.
+- **Jobs** — cron-scheduled or manual, full or incremental, per-VM retention.
+- **Backups / Verifications / Restores** — full history with status, size, duration, and error details.
+- **File Restore (FLR)** — browse a backup's volumes and download individual files from Windows guests.
+- **Users & roles** — admin/user accounts; language preference (EN/PT-BR) per browser in Settings.
 
 ## Project Status
 
@@ -29,35 +125,32 @@ Native Hyper-V/RCT code compiles and is isolated, but it still requires validati
 ## Solution Layout
 
 ```text
-HyperVBackupAgent.Core
-  Domain models and interfaces.
-
-HyperVBackupAgent.Infrastructure
-  Hyper-V providers, RCT providers, backup engine, restore engine,
-  verification, storage, metadata, retention, and PowerShell integration.
-
-HyperVBackupAgent.Cli
-  Local command-line tool.
-
-HyperVBackupAgent.Api
-  HTTPS API with bearer-token authentication.
-
-HyperVBackupAgent.Service
-  Windows Service host and scheduler.
-
-HyperVBackupAgent.Tests
-  Unit tests and simulation-mode flow tests.
+HyperVaultManager/        Web console (ASP.NET Core + Docker).
+HyperVBackupAgent.Core/   Domain models and interfaces.
+HyperVBackupAgent.Infrastructure/
+                          Hyper-V providers, RCT providers, backup engine, restore engine,
+                          verification, storage, metadata, retention, and PowerShell integration.
+HyperVBackupAgent.Cli/    Local command-line tool.
+HyperVBackupAgent.Api/    HTTPS API with bearer-token authentication.
+HyperVBackupAgent.Service/  Windows Service host and scheduler.
+HyperVBackupAgent.Tests/  Unit tests and simulation-mode flow tests.
+installer/                WiX MSI project for the agent.
+scripts/                  Build and service-install helpers.
 ```
 
 ## Requirements
 
+**Agent (real Hyper-V operations):**
+
+- Windows Server 2016+ with the Hyper-V role.
 - .NET 8 SDK or runtime.
-- Windows for real Hyper-V operations.
 - Hyper-V PowerShell module for the PowerShell provider.
 - Administrator permissions for checkpoint, VHDX mount, and VM operations.
 - Hyper-V VM configuration version that supports RCT for real incremental backups.
 
-Simulation mode can run without Hyper-V.
+**Manager:** any host with Docker (Linux recommended).
+
+**Trying it out without Hyper-V:** both Hyper-V and RCT providers have a `Simulation` mode that runs on any machine — see [Simulation Mode](#simulation-mode).
 
 ## Configuration
 
@@ -276,29 +369,7 @@ Run from an elevated PowerShell session after publishing:
 .\scripts\install-windows-services.ps1 -PublishRoot .\artifacts\publish
 ```
 
-For customer/server deployment, prefer the MSI. It publishes both services as self-contained `win-x64` executables and packages them with WiX:
-
-```powershell
-.\scripts\build-msi.ps1 -ProductVersion 1.0.0
-```
-
-The MSI is created under:
-
-```text
-installer/HyperVBackupAgent.Installer/bin/x64/Release/HyperVBackupAgent.msi
-```
-
-Install from an elevated shell:
-
-```powershell
-msiexec /i .\HyperVBackupAgent.msi API_TOKEN="<token-known-by-central-server>"
-```
-
-Optional install property:
-
-```powershell
-msiexec /i .\HyperVBackupAgent.msi API_TOKEN="<token>" BACKUP_ROOT="D:\HyperVBackups"
-```
+For customer/server deployment, prefer the MSI (see [Quick Start](#quick-start)). It publishes both services as self-contained `win-x64` executables and packages them with WiX.
 
 The MSI installs and starts both automatic services, creates `C:\ProgramData\HyperVBackupAgent` folders, configures the API for HTTPS on port `5443`, keeps the internal scheduler disabled by default, and sets production providers through machine environment variables. `API_TOKEN` is required because the central server must send the same bearer token when calling the local agent API.
 

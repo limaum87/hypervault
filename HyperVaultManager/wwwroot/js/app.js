@@ -245,7 +245,7 @@ let refreshTimer = null;
 function stopRefresh() { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } }
 function autoRefresh(ms = 12000) { stopRefresh(); refreshTimer = setInterval(() => router(true), ms); }
 
-const ROUTES = ["dashboard", "hosts", "vms", "storages", "jobs", "backups", "verifications", "restores", "settings"];
+const ROUTES = ["dashboard", "hosts", "vms", "storages", "jobs", "backups", "verifications", "restores", "flr", "settings"];
 
 let currentUser = null; // { id, username, role }
 
@@ -265,9 +265,13 @@ async function router(silent = false) {
       case "backups": await viewBackups(); break;
       case "verifications": await viewVerifications(); break;
       case "restores": await viewRestores(); break;
+      case "flr": viewFlr(); break;
       case "settings": await viewSettings(); break;
     }
-    autoRefresh();
+    // The FLR explorer is interactive state (open folders, scroll position);
+    // re-rendering it every 12s would reset the operator's place. Everything
+    // else keeps the periodic auto-refresh.
+    if (route === "flr") stopRefresh(); else autoRefresh();
     paint(document);
   } catch (err) {
     $("#view").innerHTML = `<div class="empty">${IC("alert-triangle", 30)}<div>${esc(err.message)}</div></div>`;
@@ -1450,7 +1454,9 @@ async function submitRestore() {
   const mode = ((f.querySelector('input[name="mode"]:checked') || {}).value) || "new_vm";
 
   // File-level restore is an interactive session (mount read-only + browse),
-  // not a queued job. Validate only the restore point, then open the explorer.
+  // not a queued job. Validate only the restore point, then kick off the
+  // background mount — the operator is free to keep navigating; a floating
+  // pill tracks progress and the explorer opens on the #flr page.
   if (mode === "file_level") {
     const chosen = f.querySelector('input[name="rpChoice"]:checked');
     if (!chosen || !_rpChainPath) { toast(t("restore.no_restore_points"), "err"); return; }
@@ -1459,7 +1465,8 @@ async function submitRestore() {
     const vm = _rfVms.find(v => v.id === vmId);
     const hostId = vm ? vm.hostId : Number(fd.get("sourceHostId"));
     if (!hostId) { toast(t("restore.no_vms"), "err"); return; }
-    await openFlrExplorer(hostId, _rpChainPath, chosen.value);
+    closeModal();
+    startFlrMount(hostId, _rpChainPath, chosen.value);
     return;
   }
 
@@ -1497,52 +1504,164 @@ async function submitRestore() {
 /* operator browse volumes/folders and download individual files. The      */
 /* browser only talks to the manager, which proxies to the agent.          */
 /* ===================================================================== */
-let _flr = null;      // { hostId, sessionId, expiresAt, volumes, volumeId, path:[], entries:[], restorePointPath, targetBackupId }
-let _flrTimer = null; // expiry countdown interval
+let _flr = null;          // active session: { hostId, sessionId, expiresAt, volumes, volumeId, path:[], entries:[], restorePointPath, targetBackupId }
+let _flrTimer = null;     // expiry countdown interval
+let _flrMount = null;     // in-flight mount: { hostId, restorePointPath, targetBackupId, startedAt, dismissed }
+let _flrMountTimer = null; // mount elapsed ticker
 
-async function openFlrExplorer(hostId, restorePointPath, targetBackupId) {
-  let cancelled = false;
-  openModal("restore.flr.title", `<div class="loader" style=\"padding:30px\"><span class="spinner"></span><span data-i18n="restore.flr.mounting">${t("restore.flr.mounting")}</span></div>`, "");
-  _modalCloseHook = () => { cancelled = true; };
-  try {
-    const session = await api.post(`/api/hosts/${hostId}/flr/sessions`, { restorePointPath, targetBackupId: targetBackupId || null });
-    if (cancelled) {
-      // Operator closed the modal while the disk was being mounted; tear it down.
-      if (session && session.sessionId) api.del(`/api/hosts/${hostId}/flr/sessions/${encodeURIComponent(session.sessionId)}`).catch(() => {});
-      return;
-    }
-    if (!session || !session.sessionId || !Array.isArray(session.volumes) || !session.volumes.length) {
-      throw new Error(t("restore.flr.mount_error"));
-    }
-    _flr = {
-      hostId, sessionId: session.sessionId, expiresAt: session.expiresAt,
-      volumes: session.volumes, volumeId: session.volumes[0].volumeId, path: [], entries: [],
-      restorePointPath, targetBackupId: targetBackupId || null
-    };
-    renderFlrExplorer();
-  } catch (e) {
-    if (cancelled) return;
-    closeModal();
-    toast(e.message || t("restore.flr.mount_error"), "err");
-  }
+function flrFmtElapsed(ms) {
+  const secs = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 }
 
-function renderFlrExplorer() {
-  const s = _flr; if (!s) return;
+function flrMountTickStart() {
+  flrMountTickStop();
+  flrMountTick();
+  _flrMountTimer = setInterval(flrMountTick, 1000);
+}
+function flrMountTickStop() { if (_flrMountTimer) { clearInterval(_flrMountTimer); _flrMountTimer = null; } }
+function flrMountTick() {
+  if (!_flrMount) return;
+  const label = flrFmtElapsed(Date.now() - _flrMount.startedAt);
+  const pill = $("#flrPillElapsed"); if (pill) pill.textContent = label;
+  const page = $("#flrMountElapsed"); if (page) page.textContent = label;
+}
+
+// Starts the read-only mount in the BACKGROUND. Server-side work is not tied
+// to any page/modal: the operator can navigate freely while a floating pill
+// (bottom-right, hover for details) tracks progress. When the session is
+// ready the explorer lives on the #flr page.
+function startFlrMount(hostId, restorePointPath, targetBackupId) {
+  if (_flrMount) { toast(t("restore.flr.already_mounting"), "err"); return; }
+  if (_flr) closeFlrSession(false); // replace the active session
+  const mount = { hostId, restorePointPath, targetBackupId: targetBackupId || null, startedAt: Date.now(), dismissed: false };
+  _flrMount = mount;
+  flrMountTickStart();
+  flrPillRender();
+  if (location.hash === "#flr") router(true);
+  toast(t("restore.flr.mount_started"), "ok");
+
+  api.post(`/api/hosts/${hostId}/flr/sessions`, { restorePointPath, targetBackupId: mount.targetBackupId })
+    .then(session => {
+      flrMountClear();
+      const valid = session && session.sessionId && Array.isArray(session.volumes) && session.volumes.length;
+      if (!valid) {
+        if (!mount.dismissed) {
+          toast(t("restore.flr.mount_error"), "err");
+          if (location.hash === "#flr") router(true);
+        }
+        return;
+      }
+      if (mount.dismissed) {
+        // Operator stopped tracking: close the session as soon as it exists
+        // (the agent TTL is the backstop for anything that slips through).
+        api.del(`/api/hosts/${mount.hostId}/flr/sessions/${encodeURIComponent(session.sessionId)}`).catch(() => {});
+        return;
+      }
+      _flr = {
+        hostId: mount.hostId, sessionId: session.sessionId, expiresAt: session.expiresAt,
+        volumes: session.volumes, volumeId: session.volumes[0].volumeId, path: [], entries: [],
+        restorePointPath: mount.restorePointPath, targetBackupId: mount.targetBackupId
+      };
+      flrPillRender();
+      toast(t("restore.flr.ready_toast"), "ok");
+      if (location.hash === "#flr") router(true);
+    })
+    .catch(e => {
+      flrMountClear();
+      if (!mount.dismissed) {
+        toast((e && e.message) || t("restore.flr.mount_error"), "err");
+        if (location.hash === "#flr") router(true);
+      }
+    });
+}
+
+function flrMountClear() {
+  _flrMount = null;
+  flrMountTickStop();
+  flrPillRender();
+}
+
+// Operator stops watching the mount: hide the pill. If the mount later
+// succeeds, the session is closed immediately (nothing is left orphaned).
+function flrDismissMount() {
+  if (!_flrMount) return;
+  _flrMount.dismissed = true;
+  flrMountClear();
+  toast(t("restore.flr.mount_dismissed"), "ok");
+  if (location.hash === "#flr") router(true);
+}
+
+// Floating status pill (bottom-right): spinner + elapsed while mounting,
+// ready state once the session is up. Hover shows details; click opens #flr.
+function flrPillRender() {
+  let root = $("#flrPillRoot");
+  if (!_flrMount && !_flr) { if (root) root.remove(); return; }
+  if (!currentUser) { if (root) root.remove(); return; } // don't overlay the login screen
+  if (!root) { root = document.createElement("div"); root.id = "flrPillRoot"; document.body.appendChild(root); }
+  if (_flrMount) {
+    root.innerHTML = `
+      <div class="flr-pill" onclick="location.hash='#flr'" role="button" tabindex="0">
+        <span class="spinner sm"></span>
+        <span class="flr-pill-label">${esc(t("restore.flr.pill_mounting"))}</span>
+        <span class="flr-pill-elapsed" id="flrPillElapsed">${flrFmtElapsed(Date.now() - _flrMount.startedAt)}</span>
+        <button class="flr-pill-x" onclick="event.stopPropagation(); flrDismissMount()" title="${esc(t("restore.flr.dismiss"))}">${IC("x", 12)}</button>
+        <div class="flr-pill-tip">${esc(t("restore.flr.mount_hint"))}</div>
+      </div>`;
+  } else {
+    root.innerHTML = `
+      <div class="flr-pill ready" onclick="location.hash='#flr'" role="button" tabindex="0">
+        ${IC("check", 14)}
+        <span class="flr-pill-label">${esc(t("restore.flr.pill_ready"))}</span>
+        <span class="flr-pill-elapsed" id="flrPillElapsed"></span>
+        <button class="flr-pill-x" onclick="event.stopPropagation(); closeFlrSession()" title="${esc(t("restore.flr.close"))}">${IC("x", 12)}</button>
+        <div class="flr-pill-tip">${esc(t("restore.flr.pill_ready_tip"))}</div>
+      </div>`;
+  }
+  paint(root);
+}
+
+// The #flr page: mounting card / file explorer / empty state.
+function viewFlr() {
+  setTopbar("restore.flr.page_title", _flr
+    ? `<button class="btn danger" onclick="closeFlrSession()">${IC("x", 15)} <span data-i18n="restore.flr.close">${t("restore.flr.close")}</span></button>`
+    : "");
+  if (_flrMount) {
+    $("#view").innerHTML = `
+      <div class="card" style="max-width:560px;margin:48px auto">
+        <div class="loader flr-mounting" style="padding:24px">
+          <div class="flr-mount-row"><span class="spinner"></span><span data-i18n="restore.flr.mounting">${t("restore.flr.mounting")}</span></div>
+          <div class="flr-mount-note">
+            <span class="flr-elapsed" id="flrMountElapsed">${flrFmtElapsed(Date.now() - _flrMount.startedAt)}</span>
+            <div class="flr-mount-hint" data-i18n="restore.flr.mount_hint">${t("restore.flr.mount_hint")}</div>
+          </div>
+        </div>
+      </div>`;
+    i18n.apply($("#view"));
+    return;
+  }
+  if (!_flr) {
+    $("#view").innerHTML = `<div class="empty" style="padding:80px 0">${IC("folder", 34)}
+      <div data-i18n="restore.flr.no_session">${t("restore.flr.no_session")}</div>
+      <a class="btn primary" style="margin-top:14px" href="#restores">${IC("rotate-ccw", 15)} <span data-i18n="restore.flr.go_restore">${t("restore.flr.go_restore")}</span></a>
+    </div>`;
+    i18n.apply($("#view"));
+    return;
+  }
+  const s = _flr;
   const volOpts = s.volumes.map(v => `<option value="${esc(v.volumeId)}" ${v.volumeId === s.volumeId ? "selected" : ""}>${esc(volLabel(v))}</option>`).join("");
-  const body = `
-    <div class="flr-bar">
-      <div class="flr-meta">
-        <select id="flrVolume" onchange="flrVolumeChanged()">${volOpts}</select>
-        <span class="flr-expires" id="flrExpires"></span>
+  $("#view").innerHTML = `
+    <div class="card" style="padding:16px">
+      <div class="flr-bar">
+        <div class="flr-meta">
+          <select id="flrVolume" onchange="flrVolumeChanged()">${volOpts}</select>
+          <span class="flr-expires" id="flrExpires"></span>
+        </div>
       </div>
-      <button class="btn ghost sm" onclick="closeFlrExplorerAndModal()">${IC("x", 14)} <span data-i18n="restore.flr.close">${t("restore.flr.close")}</span></button>
-    </div>
-    <div class="flr-crumbs" id="flrCrumbs">${flrBreadcrumb()}</div>
-    <div class="flr-list" id="flrList">${pageLoader()}</div>`;
-  const foot = `<button class="btn ghost" data-close data-i18n="restore.flr.close">${t("restore.flr.close")}</button>`;
-  openModal("restore.flr.title", body, foot);
-  _modalCloseHook = closeFlrExplorer; // tear the session down on Esc/backdrop/close
+      <div class="flr-crumbs" id="flrCrumbs">${flrBreadcrumb()}</div>
+      <div class="flr-list" id="flrList" style="max-height:60vh">${pageLoader()}</div>
+    </div>`;
+  i18n.apply($("#view"));
   flrStartTimer();
   flrLoadDir();
 }
@@ -1647,12 +1766,16 @@ function flrStartTimer() {
   _flrTimer = setInterval(flrTick, 15000);
 }
 function flrTick() {
-  const el = $("#flrExpires"); if (!el || !_flr) return;
+  if (!_flr) return;
   const ms = new Date(_flr.expiresAt).getTime() - Date.now();
-  if (isNaN(ms) || ms <= 0) { el.textContent = t("restore.flr.expired"); el.classList.add("danger"); return; }
-  const mins = Math.max(0, Math.floor(ms / 60000));
-  el.textContent = `${t("restore.flr.expires_in")} ${mins}m`;
-  el.classList.remove("danger");
+  let label, danger = false;
+  if (isNaN(ms) || ms <= 0) { label = t("restore.flr.expired"); danger = true; }
+  else label = `${t("restore.flr.expires_in")} ${Math.max(0, Math.floor(ms / 60000))}m`;
+  const el = $("#flrExpires");
+  if (el) { el.textContent = label; el.classList.toggle("danger", danger); }
+  // Keep the floating pill in sync with the remaining TTL as well.
+  const pill = $("#flrPillElapsed");
+  if (pill) pill.textContent = danger ? "" : `${Math.max(0, Math.floor(ms / 60000))}m`;
 }
 
 function flrShowExpired() {
@@ -1664,16 +1787,20 @@ function flrShowExpired() {
 function flrRecreate() {
   if (!_flr) return;
   const args = { hostId: _flr.hostId, restorePointPath: _flr.restorePointPath, targetBackupId: _flr.targetBackupId };
-  closeFlrExplorer();
-  openFlrExplorer(args.hostId, args.restorePointPath, args.targetBackupId);
+  closeFlrSession(true);
+  startFlrMount(args.hostId, args.restorePointPath, args.targetBackupId);
 }
 
-function closeFlrExplorer() {
+// Closes the active session (agent dismounts the VHDX and cleans up its temp
+// files). Leaving the #flr page does NOT call this — the TTL is the backstop —
+// only the explicit Close button / pill X does.
+function closeFlrSession(refresh = true) {
   if (_flrTimer) { clearInterval(_flrTimer); _flrTimer = null; }
   const s = _flr; _flr = null;
+  flrPillRender();
   if (s && s.sessionId) api.del(`/api/hosts/${s.hostId}/flr/sessions/${encodeURIComponent(s.sessionId)}`).catch(() => {});
+  if (refresh && location.hash === "#flr") router(true);
 }
-function closeFlrExplorerAndModal() { closeFlrExplorer(); closeModal(); }
 
 /* ===================================================================== */
 /* SETTINGS (account + user management)                                   */
@@ -1682,6 +1809,18 @@ async function viewSettings() {
   setTopbar("settings.title", "");
   const isAdmin = currentUser && currentUser.role === "admin";
   let html = `<div class="grid" style="grid-template-columns: 1fr; gap:24px">`;
+
+  // ---- Preferences (language) ----
+  html += `<div class="card">
+    <div class="section-head" style="margin-top:0"><h2 data-i18n="settings.preferences">${t("settings.preferences")}</h2></div>
+    <label class="lang-switch" style="margin-top:0">
+      <span class="lang-label" data-i18n="common.language">${t("common.language")}</span>
+      <div class="seg" id="langSeg">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="pt">PT</button>
+      </div>
+    </label>
+  </div>`;
 
   // ---- My account / change password ----
   html += `<div class="card">
@@ -1860,14 +1999,18 @@ async function doLogout() {
 /* ===================================================================== */
 /* BOOTSTRAP                                                              */
 /* ===================================================================== */
+let langDelegated = false;
 function wireLangSwitch() {
-  const seg = $("#langSeg");
-  const sync = () => $$("#langSeg button").forEach(b => b.classList.toggle("active", b.dataset.lang === i18n.current));
-  seg.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-lang]");
-    if (btn) i18n.setLang(btn.dataset.lang).then(sync);
-  });
-  sync();
+  // Delegated at document level: the toggle now lives inside the Settings view,
+  // which is re-rendered on every route/lang change.
+  if (!langDelegated) {
+    langDelegated = true;
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-lang]");
+      if (btn) i18n.setLang(btn.dataset.lang);
+    });
+  }
+  $$("#langSeg button").forEach(b => b.classList.toggle("active", b.dataset.lang === i18n.current));
 }
 
 window.addEventListener("hashchange", () => router());
